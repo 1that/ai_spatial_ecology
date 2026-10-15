@@ -18,11 +18,9 @@ def task_1_1():
 
 def task_1_2(world):
     print(world[['NAME', 'POP_EST', 'GDP_MD', 'geometry']].head())
-    # Информация о России
     russia = world[world['NAME'] == 'Russia']
     print(f"\nРоссия: {russia.geometry.iloc[0].geom_type}")
     print(f"Граница России -- это {len(russia.geometry.iloc[0].geoms)} полигонов")
-    # Простая визуализация
     fig, ax = plt.subplots(1, 1, figsize=(15, 10))
     world.plot(ax=ax, color='lightgreen', edgecolor='black')
     plt.title('Карта мира')
@@ -32,11 +30,8 @@ def task_1_2(world):
 
 def task_1_3(): 
     pipeline = WaterQualityPipeline("Практическая работа №1")
-    # 1. Загружаем данные о странах
     pipeline.load_world_data('data/ne_110m_admin_0_countries.shp')
-    # 2. Создаем точки проб
     pipeline.create_sample_points(15, 'astrahan')
-    # Оформляем результат
     pipeline.summary()
     return pipeline
 
@@ -68,10 +63,9 @@ def task_3_1(pipeline: WaterQualityPipeline):
 def task_4_1(pipeline: WaterQualityPipeline):
     region_name = 'astrahan'
     pipeline.create_sample_points(20, region_name)
-    # 6. Карта с точками
     output_file = f'map_{region_name}.html'
     full_path = pipeline.output_dir + output_file
-    pipeline.visualize_samples(output_file) # передаем только имя файла
+    pipeline.visualize_samples(output_file)
     webbrowser.open('file://' + os.path.realpath(full_path))
 
 

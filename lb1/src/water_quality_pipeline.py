@@ -69,7 +69,6 @@ class WaterQualityPipeline:
         print("=" * 50)
 
 
-    #Методы для работы с координатами
     def create_sk42_points(self, n_points=5):
         """Создание тестовых точек в системе СК-42 (зона 7)
         Координаты в СК-42 (метры) для территории Астраханской области"""
@@ -86,7 +85,7 @@ class WaterQualityPipeline:
         self.samples_sk42 = gpd.GeoDataFrame(
             data,
             geometry=geometry,
-            crs='EPSG:28408' # СК-42, зона 8
+            crs='EPSG:28408'
         )
         
         return self.samples_sk42
@@ -108,13 +107,10 @@ class WaterQualityPipeline:
         """
         Расчет расстояний между точками в разных проекциях
         """
-        # Приводим точки к WGS84
         gdf = gdf.to_crs('EPSG:4326')
-        # Определяем зону UTM по средней точке (38N или 39N для Астраханской области)
         lon, lat = gdf.geometry.x.mean(), gdf.geometry.y.mean()
         zone_number = utm.from_latlon(lat, lon)[2]
-        epsg_code = 32600 + zone_number  # для северного полушария
-        # Преобразуем в UTM (метры)
+        epsg_code = 32600 + zone_number
         gdf_utm = gdf.to_crs(f'EPSG:{epsg_code}')
         print(f"Зона UTM: {zone_number}N (EPSG:{epsg_code})")
         distances_utm = []
@@ -141,7 +137,6 @@ class WaterQualityPipeline:
 
 
     def compare_area_calculations(self):
-        # Сравнение расчета площади России в разных проекциях
         if self.world_data is None:
             raise ValueError("Сначала загрузите данные о странах (load_world_data)")
         
@@ -182,7 +177,6 @@ class WaterQualityPipeline:
         return results
 
     def plot_area_comparison(self):
-        # Визуализация сравнения площадей
         if 'area_comparison' not in self.results:
             raise ValueError("Сначала выполните compare_area_calculations()")
         
@@ -211,32 +205,25 @@ class WaterQualityPipeline:
 
 
     def visualize_samples(self, filename='samples_map.html'):
-        # Визуализация точек проб на интерактивной карте
         if self.samples is None:
             raise ValueError("Нет данных для визуализации")
 
-        # Центр карты
         center_lat = self.samples.geometry.y.mean()
         center_lon = self.samples.geometry.x.mean()
 
-        # Создаем карту
         m = folium.Map(location=[center_lat, center_lon], zoom_start=8)
-        # Добавляем точки
         for idx, row in self.samples.iterrows():
             folium.Marker(
                 location=[row.geometry.y, row.geometry.x],
                 popup=f"ID: {row['id']}<br>Название: {row['name']}",
                 icon=folium.Icon(color='red', icon='info-sign')
             ).add_to(m)
-        # Добавляем спутниковый слой
         folium.TileLayer(
             tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
             attr='Esri',
             name='Спутник'
         ).add_to(m)
-        # Добавляем контроль слоев: переключатель
         folium.LayerControl().add_to(m)
-        # Сохраняем
         m.save(self.output_dir+filename)
         print(f"Карта сохранена: {self.output_dir + filename}")
 
@@ -244,34 +231,26 @@ class WaterQualityPipeline:
 
 
     def create_buffer_zones(self, buffer_size_km=4, filename='buffer_zones_map.html'):
-        # Создание буферных зон вокруг точек проб
         if self.samples is None:
             raise ValueError("Нет данных")
         
-        # Определяем зону UTM по средней точке (38N или 39N для Астраханской области)
         lon, lat = self.samples.geometry.x.mean(), self.samples.geometry.y.mean()
         epsg_code = 32600 + utm.from_latlon(lat, lon)[2]
-        # Переходим в метрическую проекцию
         samples_utm = self.samples.to_crs(f'EPSG:{epsg_code}')
-        # Создаем буферы (в метрах)
         buffer_size_m = buffer_size_km * 1000
         samples_utm['buffer'] = samples_utm.geometry.buffer(buffer_size_m)
-        # Создаем отдельный GeoDataFrame только с буферами
         
         buffers_gdf = gpd.GeoDataFrame(
-            samples_utm[['id', 'name']], # берем нужные атрибуты
+            samples_utm[['id', 'name']],
             geometry=samples_utm['buffer'],
             crs=samples_utm.crs
         )
 
-        # Преобразуем буферы в WGS84 для визуализации
         buffers_wgs84 = buffers_gdf.to_crs('EPSG:4326')
-        # Центрируем карту по средним координатам исходных точек
         center_lat = self.samples.geometry.y.mean()
         center_lon = self.samples.geometry.x.mean()
         m = folium.Map(location=[center_lat, center_lon], zoom_start=8)
 
-        # Добавляем буферы
         folium.GeoJson(
             buffers_wgs84,
             name='Буферные зоны',
@@ -288,7 +267,6 @@ class WaterQualityPipeline:
             )
         ).add_to(m)
 
-        # Добавляем точки
         for idx, row in self.samples.iterrows():
             folium.Marker(
                 location=[row.geometry.y, row.geometry.x],
@@ -296,15 +274,12 @@ class WaterQualityPipeline:
                 icon=folium.Icon(color='red', icon='info-sign')
             ).add_to(m)
 
-        # Добавляем спутниковый слой
         folium.TileLayer(
             tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
             attr='Esri',
             name='Спутник'
         ).add_to(m)
-        # Добавляем контроль слоев
         folium.LayerControl().add_to(m)
-        # Сохраняем
         m.save(self.output_dir + filename)
         print(f"Карта с буферными зонами сохранена: {self.output_dir + filename}")
 
@@ -321,7 +296,6 @@ class WaterQualityPipeline:
                 'mean_lon': float(self.samples.geometry.x.mean()) if self.samples is not None else 0,
             }
         }
-        # Сохраняем JSON
         with open(self.output_dir + '1_results.json', 'w', encoding='utf-8') as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
 
