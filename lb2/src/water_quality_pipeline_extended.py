@@ -92,6 +92,7 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         self.calculate_ndbi()
         return self.indices
 
+
     def create_water_sample_points(self, n_points=50, output_file='data/water_points.geojson'):
         """
         Создание точек проб с 4 заданными кластерами
@@ -183,8 +184,7 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         return self.points_gdf
 
 
-    @staticmethod
-    def _normalize(band):
+    def normalize(self, band):
         low, high = np.percentile(band, (2, 98))
         if high <= low:
             return np.zeros_like(band)
@@ -198,7 +198,7 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
             raise ValueError("Сначала загрузите снимок и создайте точки проб")
 
         r, g, b = self.bands[0], self.bands[1], self.bands[2]
-        rgb = np.dstack((self._normalize(r), self._normalize(g), self._normalize(b)))
+        rgb = np.dstack((self.normalize(r), self.normalize(g), self.normalize(b)))
 
         fig, ax = plt.subplots(figsize=(10, 10))
         ax.imshow(rgb)
@@ -217,7 +217,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         plt.tight_layout()
         plt.savefig(self.output_dir + filename, dpi=150)
         plt.show()
-        print(f"График сохранен: {self.output_dir + filename}")
 
 
     def plot_index(self, name, cmap, vmin, vmax, title, filename=None):
@@ -236,7 +235,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         plt.tight_layout()
         plt.savefig(self.output_dir + filename, dpi=150)
         plt.show()
-        print(f"График сохранен: {self.output_dir + filename}")
 
 
     def plot_nh4_histogram(self, filename='nh4_hist.png'):
@@ -256,7 +254,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         plt.tight_layout()
         plt.savefig(self.output_dir + filename, dpi=150)
         plt.show()
-        print(f"График сохранен: {self.output_dir + filename}")
 
 
     def plot_locations(self, filename='locations.png'):
@@ -276,7 +273,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         plt.tight_layout()
         plt.savefig(self.output_dir + filename, dpi=150)
         plt.show()
-        print(f"График сохранен: {self.output_dir + filename}")
 
 
     def plot_with_points(self):
@@ -342,8 +338,7 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
  
         valid_indices = [i for i, s in enumerate(silhouette_scores) if s > -1]
         if valid_indices:
-            best_idx = max(valid_indices, key=lambda i:
-            silhouette_scores[i])
+            best_idx = max(valid_indices, key=lambda i: silhouette_scores[i])
             best_eps = eps_candidates[best_idx]
             best_score = silhouette_scores[best_idx]
         
@@ -372,6 +367,51 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         
         return best_eps
         
+
+    def most_polluted_cluster(self, points_gdf, clusters):
+        """Кластер с наибольшей средней концентрацией NH4 (без шума)"""
+
+        nh4 = pd.Series(points_gdf['NH4_mgL'].to_numpy(), index=np.asarray(clusters))
+        nh4 = nh4[nh4.index != -1]
+        if nh4.empty:
+            return None
+        
+        return nh4.groupby(level=0).mean().idxmax()
+
+
+    def ndvi_near_water(self, x, y, radius_m=100):
+        """NDVI в точке и наличие воды (NDWI > 0) в радиусе"""
+
+        if self.raster is None or 'NDVI' not in self.indices or 'NDWI' not in self.indices:
+            return None, False
+
+        row, col = self.raster.index(x, y)
+        height, width = self.indices['NDVI'].shape
+        if not (0 <= row < height and 0 <= col < width):
+            return None, False
+
+        r = max(1, int(radius_m / self.raster.res[0]))
+        window = self.indices['NDWI'][max(0, row - r):row + r + 1, max(0, col - r):col + r + 1]
+
+        return float(self.indices['NDVI'][row, col]), bool((window > 0).any())
+
+
+    def get_recommendations(self, cluster, high_cluster, x, y):
+        """Рекомендации для всплывающего окна точки"""
+
+        recommendations = []
+        if high_cluster is not None and cluster == high_cluster:
+            recommendations.append('Рекомендуется отбор повторной пробы')
+        
+        if cluster == -1:
+            recommendations.append('Проверить координаты: возможна ошибка GPS')
+        
+        ndvi, near_water = self.ndvi_near_water(x, y)
+        if ndvi is not None and ndvi < 0.2 and near_water:
+            recommendations.append('Возможен сброс сточных вод')
+
+        return recommendations
+
 
     def visualize_clusters_map(self, points_gdf=None, clusters=None, filename='clusters_map.html'):
         """Визуализация карты с кластерами проб"""
@@ -414,21 +454,28 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         m = folium.Map(location=[center_lat, center_lon], zoom_start=12)
         
         colors = ['blue', 'red', 'green', 'orange', 'purple', 'gray', 'brown', 'lightgray']
-        
+
+        high_cluster = self.most_polluted_cluster(points_gdf, clusters)
+
         points_added = 0
         for idx, row in points_wgs84.iterrows():
             cluster = clusters[idx]
             color = 'pink' if cluster == -1 else colors[cluster % len(colors)]
 
             radius = 5 + row['NH4_mgL'] * 3
-            
+
+            geom = points_gdf.loc[idx].geometry
+            recommendations = self.get_recommendations(cluster, high_cluster, geom.x, geom.y)
+            recommendations_html = ''.join(f'- {r}<br>' for r in recommendations)
+
             popup_text = f"""
-            <b>Точка {row.get('id', idx)}</b><br>
-            NH₄: {row['NH4_mgL']:.2f} мг/л<br>
-            PO₄: {row['PO4_mgL']:.2f} мг/л<br>
-            pH: {row['pH']:.2f}<br>
-            Кластер: {cluster}<br>
-            Локация: {row.get('location', 'Не указана')}
+                <b>Точка {row.get('id', idx)}</b><br>
+                NH₄: {row['NH4_mgL']:.2f} мг/л<br>
+                PO₄: {row['PO4_mgL']:.2f} мг/л<br>
+                pH: {row['pH']:.2f}<br>
+                Кластер: {cluster}<br>
+                Локация: {row.get('location', 'Не указана')}<br>
+                {'<b>Рекомендации:</b><br>' + recommendations_html if recommendations else ''}
             """
 
             folium.CircleMarker(
@@ -564,7 +611,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         plt.tight_layout()
         plt.savefig(os.path.join(self.output_dir, filename), dpi=150, bbox_inches='tight')
         plt.show()
-        print(f"График сохранен: {os.path.join(self.output_dir, filename)}")
 
 
     def plot_stl_residuals(self, resid, lower, upper, anomalies_mask, filename='ndvi_stl_resid.png'):
@@ -584,7 +630,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         plt.tight_layout()
         plt.savefig(os.path.join(self.output_dir, filename), dpi=150, bbox_inches='tight')
         plt.show()
-        print(f"График сохранен: {os.path.join(self.output_dir, filename)}")
 
 
     def plot_ndvi_with_anomalies(self, ndvi, anomalies_mask, filename='ndvi_anomalies.png'):
@@ -603,4 +648,25 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         plt.tight_layout()
         plt.savefig(os.path.join(self.output_dir, filename), dpi=150, bbox_inches='tight')
         plt.show()
-        print(f"График сохранен: {os.path.join(self.output_dir, filename)}")
+
+
+    def plot_ndvi_histograms(self, ndvi_by_label, filename='ndvi_hist.png'):
+        """Гистограммы NDVI нескольких снимков на одном графике"""
+
+        fig, ax = plt.subplots(figsize=(10, 5))
+        colors = ['green', 'red']
+        for (label, ndvi), color in zip(ndvi_by_label.items(), colors):
+            median = float(np.median(ndvi))
+            ax.hist(ndvi.ravel(), bins=100, range=(-1, 1), density=True,
+                    alpha=0.5, color=color, label=label)
+            ax.axvline(median, color=color, linestyle='--', label=f'Медиана: {median:.2f}')
+    
+        ax.set_title('Распределение NDVI')
+        ax.set_xlabel('NDVI')
+        ax.set_ylabel('Плотность')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(self.output_dir + filename, dpi=150)
+        plt.show()

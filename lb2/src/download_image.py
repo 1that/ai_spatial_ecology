@@ -28,10 +28,10 @@ collection = (
     ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
     .filterBounds(roi)
     .filterDate('2025-06-01', '2025-08-01')
-    .filter(ee.Filter.gte('CLOUDY_PIXEL_PERCENTAGE', 30))
-    .filter(ee.Filter.lte('CLOUDY_PIXEL_PERCENTAGE', 40))
+    .filter(ee.Filter.gt('CLOUDY_PIXEL_PERCENTAGE', 40))
     .sort('CLOUDY_PIXEL_PERCENTAGE')
 )
+    # .filter(ee.Filter.lte('CLOUDY_PIXEL_PERCENTAGE', 70))
 
 size = collection.size().getInfo()
 print(f"Найдено снимков: {size}")

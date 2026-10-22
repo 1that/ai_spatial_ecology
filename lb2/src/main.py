@@ -2,6 +2,7 @@ from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
 from water_quality_pipeline_extended import WaterQualityPipelineExtended
 import geopandas as gpd
+import numpy as np
 import os
 
 
@@ -57,16 +58,45 @@ def task_6_1(pipeline: WaterQualityPipelineExtended):
     print(f"Диапазон NH4: {pipeline.points_gdf['NH4_mgL'].min():.2f} - {pipeline.points_gdf['NH4_mgL'].max():.2f} мг/л")
 
 
+def task_2_3(clear_path='data/delta_volga_lt_10.tif', cloudy_path='data/delta_volga_gte_30_lte_40.tif'):
+    name_1 = 'Облачность <10%'
+    name_2 = 'Облачность 30-40%'
+    # name_3 = 'Облачность >40%'
+
+    clear = WaterQualityPipelineExtended(name_1)
+    clear.load_raster(clear_path)
+    ndvi_clear = clear.calculate_ndvi()
+    clear.plot_index('NDVI', 'RdYlGn', -0.2, 0.8, f'NDVI ({name_1})', 'ndvi_lt_10.png')
+
+    cloudy = WaterQualityPipelineExtended(name_2)
+    cloudy.load_raster(cloudy_path)
+    ndvi_cloudy = cloudy.calculate_ndvi()
+    cloudy.plot_index('NDVI', 'RdYlGn', -0.2, 0.8, f'NDVI ({name_2})', 'ndvi_gte_30_lte_40.png')
+
+    clear.plot_ndvi_histograms({
+        name_1: ndvi_clear,
+        name_2: ndvi_cloudy,
+    }, 'ndvi_cloud_hist.png')
+
+    print(f"\n{'Снимок':<20}{'Среднее':>10}{'Медиана':>10}{'СКО':>10}")
+    for label, ndvi in [(name_1, ndvi_clear), (name_2, ndvi_cloudy)]:
+        mean = round(float(ndvi.mean()), 5)
+        median = round(float(np.median(ndvi)), 5)
+        std = round(float(ndvi.std()), 5)
+        print(f"{label:<20}{mean:>10}{median:>10}{std:>10}")
+
+
 def main():
     pipeline = WaterQualityPipelineExtended()
-    # task_1_2(pipeline)
-    # task_2_1(pipeline)
-    # task_3_1(pipeline)
+    task_1_2(pipeline)
+    task_2_1(pipeline)
+    task_3_1(pipeline)
     # task_3_2(pipeline)
     # task_4_1(pipeline)
     # task_5(pipeline)
     # task_6_1(pipeline)
 
+    # task_2_3()
 
 if __name__ == '__main__':
     main()
