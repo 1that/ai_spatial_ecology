@@ -7,7 +7,12 @@ import rasterio
 from rasterio.mask import mask
 from rasterio.plot import show
 import warnings
-from water_quality_pipeline import WaterQualityPipeline
+import cv2
+from skimage.morphology import remove_small_objects, closing, disk
+from skimage.filters import threshold_otsu, threshold_local
+from skimage.exposure import equalize_hist
+from sklearn.model_selection import train_test_split
+from skimage.transform import resize
 
 
 class WaterSegmentation():
@@ -35,50 +40,86 @@ class WaterSegmentation():
             return None
 
     
-    def global_threshold(self, image, threshold=0.15):
+    def global_threshold(self, image, threshold=0.5):
         """
         Глобальный порог по NDWI
         """
         ndwi = self._get_ndwi(image)
         return (ndwi > threshold).astype(np.float32) if ndwi is not None else np.zeros(image.shape[:2])
 
-    
+
     def otsu_threshold(self, image):
         """
         Метод ОЦУ на NDWI
-        Автоматически находит оптимальный порог
+        Предварительно улучшает контраст (equalize_hist)
+        и автоматически находит оптимальный порог
         """
         ndwi = self._get_ndwi(image)
         if ndwi is None:
             return np.zeros(image.shape[:2])
-        
+
         ndwi_pos = np.clip(ndwi, 0, None)
         if ndwi_pos.max() == 0:
             return np.zeros(ndwi.shape)
-        
-        ndwi_norm = ((ndwi_pos - ndwi_pos.min()) / (ndwi_pos.max() - ndwi_pos.min()) * 255).astype(np.uint8)
+
+        ndwi_eq = equalize_hist(ndwi_pos)
         try:
-            thresh = threshold_otsu(ndwi_norm) / 255.0
-            return (ndwi > thresh).astype(np.float32)
+            return (ndwi_eq > threshold_otsu(ndwi_eq)).astype(np.float32)
         except:
             return (ndwi > np.median(ndwi)).astype(np.float32)
 
-    
-    def adaptive_threshold(self, image, threshold=0.1):
+
+    def adaptive_threshold(self, image, block_size=101, offset=-0.2):
         """
-        Адаптивный порог - упрощенная версия для NDWI
+        Адаптивный порог по NDWI: свой порог для каждой области изображения
+        block_size - размер окна (нечетный), offset - смещение порога
         """
         ndwi = self._get_ndwi(image)
-        return (ndwi > threshold).astype(np.float32) if ndwi is not None else np.zeros(image.shape[:2])
-    
-    
+        if ndwi is None:
+            return np.zeros(image.shape[:2])
+
+        local_thresh = threshold_local(ndwi, block_size, offset=offset)
+        return (ndwi > local_thresh).astype(np.float32)
+
+
     def ndwi_threshold(self, image_4band, threshold=0.15):
         """
         NDWI порог для 4-канальных данных
+        Без канала NIR использует grayscale: вода темнее суши, порог - метод Оцу
         """
-        if image_4band.shape[0] != 4:
-            return np.zeros((image_4band.shape[1], image_4band.shape[2]))
+        if image_4band.ndim == 3 and 4 in (image_4band.shape[0], image_4band.shape[-1]):
+            ndwi = self._get_ndwi(image_4band)
+            return (ndwi > threshold).astype(np.float32)
+
+        gray = image_4band.mean(axis=-1) if image_4band.ndim == 3 else image_4band
+        gray = gray.astype(np.float32)
+
+        if gray.max() == gray.min():
+            return np.zeros(gray.shape, dtype=np.float32)
         
-        green, nir = image_4band[1].astype(np.float32), image_4band[3].astype(np.float32)
-        ndwi = (green - nir) / (green + nir + 1e-8)
-        return (ndwi > threshold).astype(np.float32)
+        return (gray < threshold_otsu(gray)).astype(np.float32)
+
+
+    def postprocess_mask(self, mask, min_size=50):
+        """
+        в class WaterSegmentation
+        Постобработка бинарной маски
+        Удаляет маленькие объекты и заполняет дыры
+        """
+        mask_bool = mask > 0.5
+        mask_clean = remove_small_objects(mask_bool, min_size=min_size)
+        return closing(mask_clean, disk(2)).astype(np.float32)
+
+
+    def calculate_metrics(self, true_mask, pred_mask):
+        """
+        в class WaterSegmentation
+        Расчет метрик качества сегментации
+        IoU (Intersection over Union) - основная метрика
+        """
+        true_bin, pred_bin = true_mask > 0.5, pred_mask > 0.3
+        tp = np.sum(true_bin & pred_bin)
+        fp = np.sum(~true_bin & pred_bin)
+        fn = np.sum(true_bin & ~pred_bin)
+        return {'IoU': tp / (tp + fp + fn + 1e-10), 'TP': tp, 'FP': fp, 'FN': fn}
+
