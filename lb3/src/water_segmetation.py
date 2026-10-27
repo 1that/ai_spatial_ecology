@@ -1,18 +1,7 @@
-import os
 import numpy as np
-import geopandas as gpd
-import matplotlib.pyplot as plt
-from shapely.geometry import Point, box
-import rasterio
-from rasterio.mask import mask
-from rasterio.plot import show
-import warnings
-import cv2
-from skimage.morphology import remove_small_objects, closing, disk
-from skimage.filters import threshold_otsu, threshold_local
 from skimage.exposure import equalize_hist
-from sklearn.model_selection import train_test_split
-from skimage.transform import resize
+from skimage.filters import threshold_local, threshold_otsu
+from skimage.morphology import closing, disk, remove_small_objects
 
 
 class WaterSegmentation():
@@ -28,13 +17,13 @@ class WaterSegmentation():
         или (Green - Blue) / (Green + Blue) для RGB
         """
         if hasattr(image, 'shape') and len(image.shape) == 3:
-            if image.shape[-1] == 4: # RGBNIR (каналы в конце)
+            if image.shape[-1] == 4:
                 green, nir = image[:, :, 1].astype(np.float32), image[:, :, 3].astype(np.float32)
                 return (green - nir) / (green + nir + 1e-8)
-            elif image.shape[0] == 4: # RGBNIR (каналы первыми)
+            elif image.shape[0] == 4:
                 green, nir = image[1].astype(np.float32), image[3].astype(np.float32)
                 return (green - nir) / (green + nir + 1e-8)
-            elif image.shape[-1] >= 3: # RGB
+            elif image.shape[-1] >= 3:
                 green, blue = image[:, :, 1].astype(np.float32), image[:, :, 2].astype(np.float32)
                 return (green - blue) / (green + blue + 1e-8)
             return None

@@ -1,14 +1,14 @@
-from water_quality_pipeline_extended import WaterQualityPipelineExtended
-from water_segmetation import WaterSegmentation
-from segmentation_pipeline import SegmentationPipeline
-import tensorflow as tf
-import numpy as np
-import matplotlib.pyplot as plt
-import rasterio
+import glob
 import json
 import os
-import glob
-from shapely.geometry import Polygon, box
+import matplotlib.pyplot as plt
+import numpy as np
+import rasterio
+import tensorflow as tf
+from shapely.geometry import box
+from segmentation_pipeline import SegmentationPipeline
+from water_quality_pipeline_extended import WaterQualityPipelineExtended
+
 
 MODELS = {'Dice Loss': 'unet_dice', 'Tversky Loss': 'unet_tversky', 'Combined Loss': 'unet_combined'}
 
@@ -56,7 +56,6 @@ def task_6_1(test_image='../../lb2/src/data/delta_volga.tif',
     seg_pipeline = SegmentationPipeline()
     info_path = f'{seg_pipeline.train_dir}/best_model_info.json'
 
-    # Если лучшая модель еще не выбрана - подбираем пороги на val и берем модель с наибольшим IoU
     if not os.path.exists(info_path):
         seg_pipeline.load_dataset()
         X_val, y_val = seg_pipeline.dataset['X_val'], seg_pipeline.dataset['y_val']
@@ -73,14 +72,12 @@ def task_6_1(test_image='../../lb2/src/data/delta_volga.tif',
 
     seg_pipeline.load_best_model(info_path)
 
-    # Применяем к тестовому снимку test_image
     seg_pipeline.segment_image(
         image_path=test_image,
         output_path=output_mask,
-        threshold=seg_pipeline.best_threshold  # используем оптимальный порог
+        threshold=seg_pipeline.best_threshold
     )
 
-    # Конвертируем маску в GeoJSON
     seg_pipeline.mask_to_geojson(
         mask_path=output_mask,
         output_path=output_geojson,
@@ -100,11 +97,9 @@ def task_6_1(test_image='../../lb2/src/data/delta_volga.tif',
 
 def task_6_2():
     seg_pipeline = SegmentationPipeline()
-    # Пороги моделей подбираются на val (как в задаче 5.1)
     models, thresholds = task_5_1(seg_pipeline)
     X_test, y_test = seg_pipeline.dataset['X_test'], seg_pipeline.dataset['y_test']
 
-    # Метрики каждой модели на test с ее оптимальным порогом
     results = {}
     for name, model in models.items():
         probs = model.predict(X_test, batch_size=4, verbose=0)[..., 0]
@@ -156,7 +151,7 @@ def main():
     # task_5_3(pipeline)
     # task_6_1()
     # task_6_2()
-    task_6_3_1()
+    # task_6_3_1()
     # task_6_3_2()
 
 

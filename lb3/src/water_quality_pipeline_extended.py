@@ -1,45 +1,25 @@
+import os
+import random
+import webbrowser
+import albumentations as A
+import folium
+import geopandas as gpd
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import rasterio
+from kneed import KneeLocator
+from matplotlib.patches import Patch, Rectangle
+from PIL import Image
+from rasterio.io import DatasetReader
+from skimage.filters import threshold_otsu
+from skimage.transform import resize
+from sklearn.cluster import DBSCAN
+from sklearn.metrics import silhouette_score
+from sklearn.neighbors import NearestNeighbors
+from statsmodels.tsa.seasonal import STL
 from water_quality_pipeline import WaterQualityPipeline
 from water_segmetation import WaterSegmentation
-import rasterio
-from rasterio.io import DatasetReader
-from rasterio.warp import reproject, Resampling
-import geopandas as gpd
-import matplotlib.pyplot as plt
-import numpy as np
-import os
-from sklearn.cluster import DBSCAN
-from sklearn.preprocessing import StandardScaler
-from sklearn.neighbors import NearestNeighbors
-import folium
-import webbrowser
-from kneed import KneeLocator
-from sklearn.metrics import silhouette_score
-import pandas as pd
-from statsmodels.tsa.seasonal import STL
-import random
-import itertools
-from shapely.geometry import Point, box
-from rasterio.mask import mask
-from rasterio.plot import show
-import warnings
-from PIL import Image
-from matplotlib.patches import Patch, Rectangle
-import os
-import numpy as np
-import geopandas as gpd
-import matplotlib.pyplot as plt
-from shapely.geometry import Point, box
-import rasterio
-from rasterio.mask import mask
-from rasterio.plot import show
-import warnings
-import cv2
-from skimage.morphology import remove_small_objects, closing, disk
-from skimage.filters import threshold_otsu
-from sklearn.model_selection import train_test_split
-from skimage.transform import resize
-import albumentations as A
-
 
 
 class WaterQualityPipelineExtended(WaterQualityPipeline):
@@ -728,13 +708,11 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         print("=" * 60)
         self.dataset_dir = output_dir
 
-        # Создаем необходимые папки
         os.makedirs(f'{output_dir}/images', exist_ok=True)
         os.makedirs(f'{output_dir}/masks', exist_ok=True)
         if save_4band:
             os.makedirs(f'{output_dir}/images_4band', exist_ok=True)
 
-        # Удаляем патчи прошлого запуска, чтобы не смешивать датасеты
         for sub in ['images', 'masks', 'images_4band']:
             if os.path.isdir(f'{output_dir}/{sub}'):
                 for fname in os.listdir(f'{output_dir}/{sub}'):
@@ -743,26 +721,20 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
 
         try:
             with rasterio.open(raster_path) as src:
-                # Читаем каналы спутникового снимка
-                red = src.read(1).astype(np.float32) # B4 - красный
-                green = src.read(2).astype(np.float32) # B3 - зеленый
-                blue = src.read(3).astype(np.float32) # B2 - синий
-                nir = src.read(4).astype(np.float32) # B8 - ближний инфракрасный
+                red = src.read(1).astype(np.float32)
+                green = src.read(2).astype(np.float32)
+                blue = src.read(3).astype(np.float32)
+                nir = src.read(4).astype(np.float32)
 
                 if dynamic_world:
-                    # Эталонная маска по Dynamic World (класс 0 - вода) на дату снимка
                     water_mask = self.load_reference_mask(src, dynamic_world_path)
                 else:
-                    # Создаем эталонную маску по NDWI (индекс воды)
-                    # NDWI = (Green - NIR) / (Green + NIR) дает значения >0.15 для воды
                     ndwi = (green - nir) / (green + nir + 1e-10)
                     water_mask = (ndwi > 0.10).astype(np.uint8)
 
-                # Создаем RGB изображение для визуализации
                 rgb = np.stack([self.norm_band(red), self.norm_band(green), 
                                 self.norm_band(blue)], axis=-1).astype(np.uint8)
                 
-                # Нарезаем снимок на патчи
                 h, w = rgb.shape[:2]
                 patch_idx = 0
                 positions = []
@@ -770,15 +742,12 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
                     for x in range(0, w - patch_size + 1, stride):
                         mask_patch = water_mask[y:y + patch_size, x:x + patch_size]
                         
-                        # Сохраняем только патчи, где есть вода (больше 1% пикселей)
                         if np.sum(mask_patch) > patch_size ** 2 * 0.01:
                 
-                            # Сохраняем RGB патч
                             Image.fromarray(rgb[y:y + patch_size, x:x + patch_size]).save(
                                 f'{output_dir}/images/patch_{patch_idx:04d}.png'
                             )
                     
-                            # Сохраняем 4-канальные данные для NDWI (R,G,B,NIR)
                             if save_4band:
                                 bands = np.stack([
                                     red[y:y + patch_size, x:x + patch_size],
@@ -789,12 +758,10 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
 
                                 np.save(f'{output_dir}/images_4band/patch_{patch_idx:04d}.npy', bands)
 
-                            # Сохраняем маску воды
                             Image.fromarray((mask_patch * 255).astype(np.uint8)).save(
                                 f'{output_dir}/masks/patch_{patch_idx:04d}.png'
                             )
 
-                            # Запоминаем положение патча на снимке (для пространственного разделения)
                             positions.append({'name': f'patch_{patch_idx:04d}.png',
                                               'x': x, 'y': y, 'size': patch_size})
                             patch_idx += 1
@@ -889,7 +856,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         n_samples = min(n_samples, len(files))
         selected = random.sample(files, n_samples)
         selected.sort()
-        # Загружаем данные
         images_rgb, true_masks, images_4band = [], [], []
         for fname in selected:
             images_rgb.append(plt.imread(f'{image_dir}/{fname}'))
@@ -900,23 +866,19 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
                 images_4band.append(np.load(npy_path))
             else:
                 images_4band.append(np.zeros((256, 256, 4), dtype=np.float32))
-        # Применяем все методы
         method_results = {
             'Глобальный (0.5)': [self.segmenter.global_threshold(img4) for img4 in images_4band],
             'Оцу': [self.segmenter.otsu_threshold(img4) for img4 in images_4band],
             'Адаптивный': [self.segmenter.adaptive_threshold(img4) for img4 in images_4band],
             'NDWI (0.15)': [self.segmenter.ndwi_threshold(img4) for img4 in images_4band]
         }
-        # Добавляем постобработку
         postprocessed = {}
         for method_name, preds in method_results.items():
             post_preds = [self.segmenter.postprocess_mask(pred) for pred in preds]
             postprocessed[f'{method_name}+Пост'] = post_preds
-        # Визуализируем результаты
         self._show_results(images_rgb, true_masks, method_results, 'segmentation_results.png')
         self._show_results(images_rgb, true_masks, postprocessed, 'segmentation_results_post.png')
         method_results.update(postprocessed)
-        # Выводим метрики
         print("\n" + "=" * 60)
         print("Итоговые метрики (средний IoU по патчам)")
         print("=" * 60)
@@ -943,19 +905,15 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         print("\nIoU по методам (для первого патча):")
         print("-" * 50)
         for i in range(n_samples):
-            # Оригинал
             axes[i, 0].imshow(images[i])
             axes[i, 0].set_title('RGB', fontsize=12)
             axes[i, 0].axis('off')
-            # Идеальная маска (Ground Truth)
             axes[i, 1].imshow(true_masks[i], cmap='Blues', vmin=0, vmax=1)
             axes[i, 1].set_title('Ground Truth', fontsize=12)
             axes[i, 1].axis('off')
-            # Результаты всех методов
             for j, (method_name, preds) in enumerate(methods.items()):
                 col = j + 2
                 pred = preds[i]
-                # Приводим к правильной размерности
                 if len(pred.shape) == 3 and pred.shape[0] == 4:
                     pred = np.mean(pred, axis=0)
                 elif len(pred.shape) == 3:
@@ -1009,7 +967,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
             'NDWI (0.15)': self.segmenter.ndwi_threshold(image_4band),
         }
 
-        # Патч и эталонная маска - отдельный рисунок
         fig, axes = plt.subplots(1, 2, figsize=(8, 4))
         axes[0].imshow(image)
         axes[0].set_title(f'RGB: {patch_name}')
@@ -1033,7 +990,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
             tp, fp = (true_mask & pred).sum(), (~true_mask & pred).sum()
             fn, tn = (true_mask & ~pred).sum(), (~true_mask & ~pred).sum()
 
-            # Карта ошибок
             error_map = np.zeros((*true_mask.shape, 3))
             for key, area in [('TP', true_mask & pred), ('FP', ~true_mask & pred),
                               ('FN', true_mask & ~pred), ('TN', ~true_mask & ~pred)]:
@@ -1043,7 +999,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
             axes[0, col].set_title(f'{name}\nIoU = {iou:.3f}')
             axes[0, col].axis('off')
 
-            # Матрица ошибок 2x2: строки - эталон, столбцы - предсказание
             matrix = np.array([[tp, fn], [fp, tn]])
             axes[1, col].imshow(matrix / n, cmap='Blues', vmin=0, vmax=1)
             for (r, c), value in np.ndenumerate(matrix):
@@ -1102,7 +1057,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         for img_file in positions['name']:
             mask_file = img_file
 
-            # Загрузка и нормализация изображения
             img = plt.imread(f'{image_dir}/{img_file}')
             if img.max() > 1.0:
                 if img.max() <= 255:
@@ -1111,11 +1065,9 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
                     p2, p98 = np.percentile(img, (2, 98))
                     img = np.clip((img - p2) / (p98 - p2 + 1e-8), 0, 1)
 
-            # Ресайз при необходимости
             if img.shape[:2] != img_size:
                 img = resize(img, img_size, preserve_range=True, anti_aliasing=True)
 
-            # Загрузка маски
             mask = plt.imread(f'{mask_dir}/{mask_file}')
             if mask.ndim == 3:
                 mask = mask[:, :, 0]
@@ -1129,7 +1081,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         X, y = np.array(images), np.array(masks)
         print(f"Размерность данных: X {X.shape}, y {y.shape}")
 
-        # Пространственное разделение на train/val/test по клеткам снимка
         split = self.block_split(positions['x'].to_numpy(), positions['y'].to_numpy(),
                                  y.mean(axis=(1, 2)), int(positions['size'].iloc[0]),
                                  block_size, train_size, val_size)
@@ -1155,7 +1106,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
             'X_val': X_val, 'y_val': y_val,
             'X_test': X_test, 'y_test': y_test
         }
-        # Сведения о разбиении для визуализации (plot_dataset_split)
         self.split_info = {
             'positions': positions, 'block_size': block_size, 'cell_set': cell_set,
             'train_idx': train_idx, 'val_idx': val_idx, 'test_idx': test_idx
@@ -1189,13 +1139,11 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         fig, ax = plt.subplots(figsize=(10, 11))
         ax.imshow(rgb)
 
-        # Клетки, закрашенные цветом своей выборки (клетки без патчей не закрашены)
         for (r, c), part in cell_set.items():
             ax.add_patch(Rectangle((c * block_size, r * block_size), block_size, block_size,
                                    facecolor=colors[part], edgecolor='white',
                                    alpha=0.3, linewidth=1))
 
-        # Центры патчей
         centers_x = positions['x'].to_numpy() + patch_size / 2
         centers_y = positions['y'].to_numpy() + patch_size / 2
         used = np.zeros(len(positions), dtype=bool)
@@ -1229,7 +1177,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         """
         rng = np.random.default_rng(seed)
         target = np.array([train_size, val_size, 1 - train_size - val_size])
-        # Клетки, которые накрывает каждый патч
         cells = [{(r, c) for r in range(y // block_size, (y + patch_size - 1) // block_size + 1)
                          for c in range(x // block_size, (x + patch_size - 1) // block_size + 1)}
                  for x, y in zip(xs, ys)]
@@ -1238,7 +1185,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         n_test = round(len(all_cells) * target[2])
         best = None
         for _ in range(n_trials):
-            # Перемешиваем клетки: первые n_val - val, следующие n_test - test, остальные - train
             order = rng.permutation(len(all_cells))
             cell_set = {all_cells[j]: 1 if i < n_val else 2 if i < n_val + n_test else 0
                         for i, j in enumerate(order)}
@@ -1268,30 +1214,25 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         датасета за счет случайных преобразований изображений.
         """
         return A.Compose([
-            # Геометрические преобразования
             A.RandomRotate90(p=0.5),
             A.HorizontalFlip(p=0.5),
             A.VerticalFlip(p=0.5),
             A.Transpose(p=0.3),
             A.Affine(translate_percent=(-0.1, 0.1), scale=(0.9, 1.1), rotate=(-30, 30), p=0.3),
 
-            # Цветовые преобразования
             A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
             A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.4),
             A.HueSaturationValue(hue_shift_limit=15, sat_shift_limit=25, val_shift_limit=15, p=0.3),
 
-            # Шумы и размытие
             A.GaussNoise(std_range=(0.012, 0.025), p=0.3),
             A.ISONoise(color_shift=(0.01, 0.05), p=0.2),
             A.GaussianBlur(blur_limit=(3, 5), p=0.3),
             A.MedianBlur(blur_limit=5, p=0.2),
 
-            # Погодные эффекты (для спутниковых снимков)
             A.RandomFog(fog_coef_range=(0.1, 0.3), p=0.2),
             A.RandomRain(slant_range=(-10, 10), drop_width=1, p=0.1),
             A.RandomSnow(snow_point_range=(0.1, 0.3), p=0.1),
 
-            # Вырезание (учат модель не полагаться на отдельные пиксели)
             A.CoarseDropout(num_holes_range=(8, 8), hole_height_range=(32, 32),
                             hole_width_range=(32, 32), fill=0, p=0.2),
         ], p=p)
@@ -1308,13 +1249,11 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
 
         aug_images, aug_masks = [], []
         for i in range(len(images)):
-            # Приводим к uint8
             img_uint8 = (images[i] * 255).astype(np.uint8) if images[i].max() <= 1.0 else images[i].astype(np.uint8)
             mask_uint8 = (masks[i] * 255).astype(np.uint8)
 
             augmented = augmentor(image=img_uint8, mask=mask_uint8)
 
-            # Возвращаем в float32 [0,1] для нейросети
             aug_images.append(augmented['image'].astype(np.float32) / 255.0)
             aug_masks.append(augmented['mask'].astype(np.float32) / 255.0)
 
@@ -1342,7 +1281,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
 
         fig, axes = plt.subplots(2, n_samples * 2, figsize=(4 * n_samples * 2, 8))
         for i in range(n_samples):
-            # Оригиналы
             axes[0, i * 2].imshow(sample_images[i])
             axes[0, i * 2].set_title(f'Оригинал {i + 1}')
             axes[0, i * 2].axis('off')
@@ -1351,7 +1289,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
             axes[0, i * 2 + 1].set_title(f'Маска {i + 1}')
             axes[0, i * 2 + 1].axis('off')
 
-            # Аугментированные
             axes[1, i * 2].imshow(aug_images[i])
             axes[1, i * 2].set_title(f'Аугмент. {i + 1}')
             axes[1, i * 2].axis('off')
@@ -1378,7 +1315,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
 
         n_samples = min(30, len(X_val))
         X_sample, y_sample = X_val[:n_samples], y_val[:n_samples]
-        # Предсказание считаем один раз, дальше меняется только порог
         preds = model.predict(X_sample, batch_size=4, verbose=0)[..., 0]
 
         for threshold in thresholds:
@@ -1422,8 +1358,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
 
         plt.axvline(x=best_threshold, color='red', linestyle='--', alpha=0.7)
         plt.scatter([best_threshold], [best_iou], color='red', s=200, zorder=5)
-        # Подпись смещена от точки оптимума в пунктах, а не в единицах IoU,
-        # чтобы не выходить за график при малом разбросе IoU
         plt.annotate(
             f'Оптимум: {best_threshold:.2f}\nIoU={best_iou:.4f}',
             xy=(best_threshold, best_iou), xytext=(10, -35), textcoords='offset points',
@@ -1458,7 +1392,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         if len(indices) == 1:
             axes = axes.reshape(1, -1)
 
-        # Эмпирически подобранные пороги для каждой модели
         optimal_thresholds = {'Dice Loss': 0.65, 'Tversky Loss': 0.5, 'Combined Loss': 0.45}
 
         for row, idx in enumerate(indices):
@@ -1480,7 +1413,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
                 pred_raw = model.predict(img[np.newaxis], verbose=0)[0, :, :, 0]
                 threshold = optimal_thresholds.get(name, 0.5)
 
-                # Для Dice Loss используем Otsu если предсказания слишком высокие
                 if name == 'Dice Loss' and pred_raw.mean() > 0.7:
                     try:
                         pred_norm = ((pred_raw - pred_raw.min()) / (pred_raw.max() - pred_raw.min() + 1e-8) * 255).astype(np.uint8)
@@ -1497,7 +1429,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
                 axes[row, col].axis('off')
                 col += 1
 
-            # Карта ошибок лучшей модели
             if ious:
                 best_name, best_iou = max(ious, key=lambda x: x[1])
                 best_model = models_dict[best_name]
@@ -1506,9 +1437,9 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
                 pred_bin = self.segmenter.postprocess_mask((pred_raw > threshold).astype(np.float32))
 
                 error_map = np.zeros((*pred_bin.shape, 3))
-                tp_mask = (true_mask > 0.5) & (pred_bin > 0.5)  # True Positive (зеленый)
-                fp_mask = (true_mask <= 0.5) & (pred_bin > 0.5)  # False Positive (красный)
-                fn_mask = (true_mask > 0.5) & (pred_bin <= 0.5)  # False Negative (желтый)
+                tp_mask = (true_mask > 0.5) & (pred_bin > 0.5)
+                fp_mask = (true_mask <= 0.5) & (pred_bin > 0.5)
+                fn_mask = (true_mask > 0.5) & (pred_bin <= 0.5)
                 error_map[tp_mask] = [0, 1, 0]
                 error_map[fp_mask] = [1, 0, 0]
                 error_map[fn_mask] = [1, 1, 0]
@@ -1569,7 +1500,6 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
                 axes[row, col].axis('off')
                 col += 1
 
-            # Карта ошибок лучшей модели
             if ious:
                 best_name, best_iou = max(ious, key=lambda x: x[1])
                 best_model = models_dict[best_name]

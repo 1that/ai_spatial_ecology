@@ -1,13 +1,12 @@
+import json
+import os
+import folium
 import geopandas as gpd
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-from shapely.geometry import Point
-import folium
-import os
 import utm
-import json
-import pickle
+from shapely.geometry import Point
 
 
 class WaterQualityPipeline:
@@ -17,8 +16,8 @@ class WaterQualityPipeline:
         self.samples_sk42 = None
         self.world_data = None
         self.results = {}
-        self.dataset_dir = 'water_dataset' # Папка с датасетом
-        self.train_dir = 'model_train' # Папка для сохранения моделей
+        self.dataset_dir = 'water_dataset'
+        self.train_dir = 'model_train'
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
         print(f"Создан объект: {name}")
