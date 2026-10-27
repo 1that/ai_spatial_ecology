@@ -7,11 +7,17 @@ import matplotlib.pyplot as plt
 import rasterio
 import json
 import os
+import glob
+from shapely.geometry import Polygon, box
 
 MODELS = {'Dice Loss': 'unet_dice', 'Tversky Loss': 'unet_tversky', 'Combined Loss': 'unet_combined'}
 
 def task_2_1(pipeline: WaterQualityPipelineExtended):
     pipeline.test_methods_on_patches(n_samples=3)
+
+
+def task_2_2(pipeline: WaterQualityPipelineExtended):
+    pipeline.plot_confusion_matrix()
 
 
 def task_3_1(pipeline: WaterQualityPipelineExtended):
@@ -113,15 +119,45 @@ def task_6_2():
                                       seg_pipeline.dataset['X_train'], seg_pipeline.dataset['X_val'], X_test)
 
 
+def task_6_3_1(test_image='data/delta_volga.tif',
+               output_mask='data/full_mask.tif',
+               output_geojson='data/water_bodies.geojson'):
+    seg_pipeline = SegmentationPipeline()
+    seg_pipeline.load_best_model(f'{seg_pipeline.train_dir}/best_model_info.json')
+    return seg_pipeline.segment_and_export(test_image, output_mask=output_mask,
+                                           output_geojson=output_geojson, min_area=1000)
+
+
+def task_6_3_2(series_dir='data/date_series'):
+    seg_pipeline = SegmentationPipeline()
+    seg_pipeline.load_best_model(f'{seg_pipeline.train_dir}/best_model_info.json')
+
+    image_paths = sorted(glob.glob(f'{series_dir}/delta_volga(*).tif'))
+    reference_paths = sorted(glob.glob(f'{series_dir}/dynamic_world_label(*).tif'))
+
+    top_left = (45.801636, 48.603861)
+    bottom_right = (45.749001, 48.694187)
+    
+    roi = box(top_left[1], bottom_right[0], bottom_right[1], top_left[0])
+    seg_pipeline.plot_roi(image_paths, roi)
+
+    gdf = seg_pipeline.segment_time_series(image_paths, roi, reference_paths=reference_paths)
+    gdf.to_file('data/water_time_series.geojson', driver='GeoJSON')
+    return gdf
+
+
 def main():
     pipeline = WaterQualityPipelineExtended()
     # task_3_1(pipeline)
     # task_2_1(pipeline)
-    task_3_3(pipeline)
+    # task_2_2(pipeline)
+    # task_3_3(pipeline)
     # task_5_1(pipeline)
     # task_5_3(pipeline)
     # task_6_1()
-    task_6_2()
+    # task_6_2()
+    task_6_3_1()
+    # task_6_3_2()
 
 
 if __name__ == '__main__':

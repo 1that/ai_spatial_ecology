@@ -153,11 +153,152 @@ class SegmentationPipeline(WaterQualityPipelineExtended):
                            output_geojson='water_bodies.geojson',
                            threshold=None, min_area=1000):
         """
-        Полный цикл: сегментация снимка и экспорт в GeoTIFF и GeoJSON.
+        Полный цикл: сегментация снимка, экспорт в GeoTIFF и GeoJSON и расчет статистики
+        водных объектов. Статистика сохраняется рядом с GeoJSON (*_stats.json)
         """
         self.segment_image(image_path, output_path=output_mask, threshold=threshold)
-        self.mask_to_geojson(output_mask, output_geojson, min_area=min_area)
+        gdf = self.mask_to_geojson(output_mask, output_geojson, min_area=min_area)
         print("Интеграция завершена: получены растровая и векторная маски.")
+
+        stats = self.calculate_water_statistics(gdf)
+        stats_path = os.path.splitext(output_geojson)[0] + '_stats.json'
+        with open(stats_path, 'w', encoding='utf-8') as f:
+            json.dump(stats, f, ensure_ascii=False, indent=2)
+        print(f"Статистика сохранена: {stats_path}")
+        return stats
+
+    def calculate_water_statistics(self, gdf):
+        """
+        Статистика водных объектов по GeoDataFrame из mask_to_geojson
+        (площадь берется из колонки area_m2, посчитанной в метровой системе координат снимка)
+        1 га = 10 000 м²
+        """
+        total_m2 = float(gdf['area_m2'].sum())
+        n_objects = len(gdf)
+        mean_m2 = total_m2 / n_objects if n_objects else 0.0
+
+        stats = {
+            'total_area_m2': round(total_m2, 1),
+            'total_area_ha': round(total_m2 / 1e4, 2),
+            'n_objects': n_objects,
+            'mean_area_m2': round(mean_m2, 1),
+            'mean_area_ha': round(mean_m2 / 1e4, 2),
+        }
+        print("\nСтатистика водных объектов:")
+        print(f"Общая площадь: {stats['total_area_m2']:,.0f} м2 ({stats['total_area_ha']:,.2f} га)".replace(',', ' '))
+        print(f"Количество водоемов: {n_objects}")
+        print(f"Средний размер объекта: {stats['mean_area_m2']:,.0f} м2 ({stats['mean_area_ha']:,.2f} га)".replace(',', ' '))
+        return stats
+
+    def plot_roi(self, image_paths, roi, dates=None, filename='roi.png'):
+        """
+        Область интереса (красный контур) поверх RGB-снимков серии.
+        roi - shapely-геометрия в EPSG:4326 или GeoDataFrame/GeoSeries
+        """
+        import re
+        import matplotlib.pyplot as plt
+
+        if dates is None:
+            dates = [re.search(r'\d{4}-\d{2}-\d{2}', os.path.basename(p)).group() for p in image_paths]
+        roi = gpd.GeoSeries([roi], crs='EPSG:4326') if not isinstance(roi, (gpd.GeoSeries, gpd.GeoDataFrame)) else roi
+
+        fig, axes = plt.subplots(1, len(image_paths), figsize=(5 * len(image_paths), 5.5), squeeze=False)
+        for ax, path, date in zip(axes[0], image_paths, dates):
+            with rasterio.open(path) as src:
+                rgb = np.stack([self.norm_band(src.read(i).astype(np.float32)) for i in (1, 2, 3)],
+                               axis=-1).astype(np.uint8)
+                b, crs = src.bounds, src.crs
+            ax.imshow(rgb, extent=(b.left, b.right, b.bottom, b.top))
+            roi.to_crs(crs).boundary.plot(ax=ax, color='red', linewidth=2)
+            ax.set_xlim(b.left, b.right)
+            ax.set_ylim(b.bottom, b.top)
+            ax.set_title(date)
+            ax.axis('off')
+
+        roi_area = roi.to_crs(crs).area.sum() / 1e6
+        fig.suptitle(f'Область интереса, площадь {roi_area:.1f} км^2', fontsize=14, y=1.03)
+        plt.tight_layout()
+        plt.savefig(self.output_dir + filename, dpi=150, bbox_inches='tight')
+        plt.show()
+
+    def segment_time_series(self, image_paths, roi, dates=None, reference_paths=None,
+                            threshold=None, filename='water_dynamics.png'):
+        """
+        Сегментация серии снимков одной территории за разные даты.
+
+        Параметры:
+        - image_paths: список путей к снимкам (GeoTIFF, каналы B4, B3, B2, ...)
+        - roi: общая область интереса (shapely-геометрия в EPSG:4326 или GeoDataFrame/GeoSeries)
+        - dates: список дат; если None - дата берется из имени файла (первая дата вида YYYY-MM-DD)
+        - reference_paths: необязательные маски Dynamic World для сравнения (класс 0 - вода)
+        - threshold: порог бинаризации (None - best_threshold модели)
+
+        Возвращает:
+        - gdf: GeoDataFrame с колонками date, water_area (км²), n_objects
+          и геометрией водных объектов внутри ROI на каждую дату
+        """
+        import re
+        import matplotlib.pyplot as plt
+        from rasterio.features import geometry_mask
+        from shapely.geometry import MultiPolygon
+
+        if threshold is None:
+            threshold = self.best_threshold if self.best_threshold is not None else 0.5
+        if dates is None:
+            dates = [re.search(r'\d{4}-\d{2}-\d{2}', os.path.basename(p)).group() for p in image_paths]
+        roi = gpd.GeoSeries([roi], crs='EPSG:4326') if not isinstance(roi, (gpd.GeoSeries, gpd.GeoDataFrame)) else roi
+
+        rows = []
+        for i, (path, date) in enumerate(zip(image_paths, dates)):
+            print(f"\n[{i + 1}/{len(image_paths)}] {date}: {os.path.basename(path)}")
+            with rasterio.open(path) as src:
+                crs, transform, shape_hw = src.crs, src.transform, (src.height, src.width)
+            pixel_area = abs(transform.a * transform.e)
+
+            # Маска ROI в системе координат снимка (True - внутри области)
+            roi_mask = ~geometry_mask(roi.to_crs(crs).geometry, out_shape=shape_hw, transform=transform)
+
+            probs = self.segment_image(path, threshold=threshold)
+            water = self.segmenter.postprocess_mask((probs > threshold).astype(np.float32)).astype(np.uint8)
+            water[~roi_mask] = 0
+
+            # Водные объекты - связные полигоны воды (мелкий шум уже удален postprocess_mask)
+            polygons = [shape(g) for g, _ in features.shapes(water.astype(np.int16), mask=water == 1, transform=transform)]
+
+            row = {'date': pd.to_datetime(date),
+                   'water_area': sum(p.area for p in polygons) / 1e6,
+                   'n_objects': len(polygons),
+                   'geometry': MultiPolygon(polygons) if polygons else None}
+
+            if reference_paths is not None:
+                with rasterio.open(reference_paths[i]) as ref:
+                    ref_water = (ref.read(1) == 0) & roi_mask
+                row['water_area_dw'] = ref_water.sum() * pixel_area / 1e6
+
+            rows.append(row)
+            print(f"Площадь воды: {row['water_area']:.2f} км2, объектов: {row['n_objects']}")
+
+        gdf = gpd.GeoDataFrame(rows, geometry='geometry', crs=crs).sort_values('date').reset_index(drop=True)
+
+        # График динамики площади воды
+        fig, ax1 = plt.subplots(figsize=(10, 5))
+        ax1.plot(gdf['date'], gdf['water_area'], 'o-', color='tab:blue', label='U-Net')
+        if 'water_area_dw' in gdf:
+            ax1.plot(gdf['date'], gdf['water_area_dw'], 's--', color='tab:gray', label='Dynamic World')
+        ax1.set_ylabel('Площадь воды, км^2')
+        ax1.set_xlabel('Дата')
+        ax1.set_xticks(gdf['date'])
+        ax1.set_xticklabels(gdf['date'].dt.strftime('%Y-%m-%d'))
+        ax1.grid(alpha=0.3)
+        ax1.legend(loc='upper left')
+        ax1.set_title('Динамика площади водной поверхности')
+        fig.autofmt_xdate()
+        plt.tight_layout()
+        plt.savefig(self.output_dir + filename, dpi=150, bbox_inches='tight')
+        plt.show()
+
+        print(gdf.drop(columns='geometry').to_string(index=False))
+        return gdf
 
     def save_pract34_results(self, models, results, X_train, X_val, X_test):
         """

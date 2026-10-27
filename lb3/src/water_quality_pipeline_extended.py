@@ -975,6 +975,98 @@ class WaterQualityPipelineExtended(WaterQualityPipeline):
         plt.show()
 
 
+    def plot_confusion_matrix(self, patch_name=None, target_water=0.2, filename='confusion_matrix.png'):
+        """
+        Матрица ошибок в пиксельном пространстве для одного патча и всех пороговых методов.
+        Карта ошибок: зеленый - TP (вода найдена), красный - FP (ложная вода),
+        желтый - FN (пропущенная вода), серый - TN (фон верно)
+        patch_name=None - берется патч с долей воды, ближайшей к target_water
+        """
+        print("\n" + "=" * 60)
+        print("Задача 2.2: Матрица ошибок для патча")
+        print("=" * 60)
+        image_dir = f'{self.dataset_dir}/images'
+        mask_dir = f'{self.dataset_dir}/masks'
+        npy_dir = f'{self.dataset_dir}/images_4band'
+
+        def load_mask(name):
+            mask = plt.imread(f'{mask_dir}/{name}')
+            return (mask[:, :, 0] if mask.ndim == 3 else mask) > 0.5
+
+        if patch_name is None:
+            files = sorted(set(os.listdir(image_dir)) & set(os.listdir(mask_dir)))
+            patch_name = min(files, key=lambda f: abs(load_mask(f).mean() - target_water))
+
+        image = plt.imread(f'{image_dir}/{patch_name}')
+        true_mask = load_mask(patch_name)
+        image_4band = np.load(f'{npy_dir}/{patch_name[:-4]}.npy')
+        print(f"Патч {patch_name}, вода {true_mask.mean() * 100:.1f}% пикселей")
+
+        methods = {
+            'Глобальный (0.5)': self.segmenter.global_threshold(image_4band),
+            'Оцу': self.segmenter.otsu_threshold(image_4band),
+            'Адаптивный': self.segmenter.adaptive_threshold(image_4band),
+            'NDWI (0.15)': self.segmenter.ndwi_threshold(image_4band),
+        }
+
+        # Патч и эталонная маска - отдельный рисунок
+        fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+        axes[0].imshow(image)
+        axes[0].set_title(f'RGB: {patch_name}')
+        axes[1].imshow(true_mask, cmap='Blues', vmin=0, vmax=1)
+        axes[1].set_title(f'Эталон ({true_mask.mean() * 100:.1f}% воды)')
+        for ax in axes:
+            ax.axis('off')
+        plt.tight_layout()
+        plt.savefig(f'{self.dataset_dir}/{filename[:-4]}_patch.png', dpi=150, bbox_inches='tight')
+        plt.show()
+
+        colors = {'TP': (0, 0.8, 0), 'FP': (0.9, 0, 0), 'FN': (1, 0.85, 0), 'TN': (0.6, 0.6, 0.6)}
+        fig, axes = plt.subplots(2, len(methods), figsize=(4 * len(methods), 8))
+        fig.legend(handles=[Patch(color=c, label=k) for k, c in colors.items()],
+                   loc='lower center', bbox_to_anchor=(0.5, 1.0), ncol=4, fontsize=12, title='Карта ошибок')
+
+        rows = []
+        n = true_mask.size
+        for col, (name, pred) in enumerate(methods.items()):
+            pred = pred > 0.5
+            tp, fp = (true_mask & pred).sum(), (~true_mask & pred).sum()
+            fn, tn = (true_mask & ~pred).sum(), (~true_mask & ~pred).sum()
+
+            # Карта ошибок
+            error_map = np.zeros((*true_mask.shape, 3))
+            for key, area in [('TP', true_mask & pred), ('FP', ~true_mask & pred),
+                              ('FN', true_mask & ~pred), ('TN', ~true_mask & ~pred)]:
+                error_map[area] = colors[key]
+            iou = tp / (tp + fp + fn + 1e-10)
+            axes[0, col].imshow(error_map)
+            axes[0, col].set_title(f'{name}\nIoU = {iou:.3f}')
+            axes[0, col].axis('off')
+
+            # Матрица ошибок 2x2: строки - эталон, столбцы - предсказание
+            matrix = np.array([[tp, fn], [fp, tn]])
+            axes[1, col].imshow(matrix / n, cmap='Blues', vmin=0, vmax=1)
+            for (r, c), value in np.ndenumerate(matrix):
+                label = [['TP', 'FN'], ['FP', 'TN']][r][c]
+                axes[1, col].text(c, r, f'{label}\n{value}\n({value / n * 100:.1f}%)', ha='center', va='center',
+                                  color='white' if value / n > 0.5 else 'black', fontsize=11)
+            axes[1, col].set_xticks([0, 1], ['Вода', 'Фон'])
+            axes[1, col].set_yticks([0, 1], ['Вода', 'Фон'])
+            axes[1, col].set_xlabel('Предсказание')
+            axes[1, col].set_ylabel('Эталон')
+
+            rows.append({'Метод': name, 'TP': tp, 'FP': fp, 'FN': fn, 'TN': tn, 'IoU': iou,
+                         'Precision': tp / (tp + fp + 1e-10), 'Recall': tp / (tp + fn + 1e-10)})
+
+        plt.tight_layout()
+        plt.savefig(f'{self.dataset_dir}/{filename}', dpi=150, bbox_inches='tight')
+        plt.show()
+
+        table = pd.DataFrame(rows).set_index('Метод')
+        print(table.round(3).to_string())
+        return table
+
+
     def load_dataset(self, data_dir='water_dataset', img_size=(256, 256), train_size=0.7, val_size=0.15,
                      block_size=448):
         """
