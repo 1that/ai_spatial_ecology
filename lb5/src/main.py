@@ -53,7 +53,6 @@ def task_5_3(analyzer: WaterQualityPipelineAnalytics):
 
 
 def task_4_4(analyzer: WaterQualityPipelineAnalytics):
-    # Один и тот же report_data используется для двух разных PDF
     for lang in ['ru', 'en']:
         analyzer.generate_report_figures(lang=lang)
         analyzer.generate_html_report(lang=lang)

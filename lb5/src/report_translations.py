@@ -5,7 +5,6 @@ TRANSLATIONS_DIR = Path(__file__).parent / 'translations'
 
 
 def load_translations(translations_dir=TRANSLATIONS_DIR):
-    """Читает все JSON-файлы переводов и возвращает словари фраз и значений по языкам."""
     translations = {}
     value_translations = {}
     date_formats = {}
