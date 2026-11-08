@@ -12,7 +12,7 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from jinja2 import Environment, FileSystemLoader
 from matplotlib.patches import Patch
-from report_translations import TRANSLATIONS, VALUE_TRANSLATIONS
+from report_translations import DATE_FORMATS, TRANSLATIONS, VALUE_TRANSLATIONS
 from water_quality_pipeline import WaterQualityPipeline
 
 
@@ -404,8 +404,28 @@ class WaterQualityPipelineAnalytics(WaterQualityPipeline):
         print(f"\nКарта сохранена: {html_path}")
         webbrowser.open('file://' + os.path.realpath(html_path))
 
-    def create_static_izv_map(self, output_file='izv_map_static.png'):
-        """Создает статическую карту ИЗВ, сохраняет ее в файл и показывает на экране."""
+    def get_translations(self, lang='ru'):
+        """Возвращает словари фраз и значений для выбранного языка."""
+        if lang not in TRANSLATIONS:
+            raise ValueError(f"Язык {lang} не поддерживается. Доступные языки: {list(TRANSLATIONS)}")
+        return TRANSLATIONS[lang], VALUE_TRANSLATIONS.get(lang, {})
+
+    def get_figure_file(self, name, lang='ru'):
+        """Возвращает имя файла рисунка с суффиксом языка, например izv_map_static_en.png."""
+        return f'{name}_{lang}.png'
+
+    def finish_figure(self, fig, output_file, show):
+        """Сохраняет рисунок и показывает его на экране или закрывает без показа."""
+        plt.savefig(self.output_dir + output_file, dpi=150, bbox_inches='tight')
+        if show:
+            plt.show()
+        else:
+            plt.close(fig)
+
+    def create_static_izv_map(self, output_file=None, lang='ru', show=True):
+        """Создает статическую карту ИЗВ на выбранном языке и сохраняет ее в файл."""
+        t, values = self.get_translations(lang)
+        output_file = output_file or self.get_figure_file('izv_map_static', lang)
         samples_gdf_wgs84 = self.samples_gdf_wgs84
 
         print("\nСоздание статической карты...")
@@ -417,19 +437,18 @@ class WaterQualityPipelineAnalytics(WaterQualityPipeline):
             color = self.CLASS_COLORS.get(row['quality_class'], 'gray')
             ax.scatter(row.geometry.x, row.geometry.y, c=color, s=50, alpha=0.7, edgecolors='black', linewidth=0.5)
 
-        ax.set_xlabel('Долгота')
-        ax.set_ylabel('Широта')
-        ax.set_title('Качество воды по индексу ИЗВ', fontsize=14)
+        ax.set_xlabel(t['fig_longitude'])
+        ax.set_ylabel(t['fig_latitude'])
+        ax.set_title(t['fig_static_map_title'], fontsize=14)
         ax.grid(True, alpha=0.3)
 
-        legend_elements = [Patch(facecolor=color, label=label, alpha=0.7)
+        legend_elements = [Patch(facecolor=color, label=values.get(label, label), alpha=0.7)
                            for label, color in self.CLASS_COLORS.items()
                            if label in samples_gdf_wgs84['quality_class'].unique()]
-        ax.legend(handles=legend_elements, loc='upper right', title='Класс качества')
+        ax.legend(handles=legend_elements, loc='upper right', title=t['quality_class'])
 
         plt.tight_layout()
-        plt.savefig(self.output_dir + output_file, dpi=150, bbox_inches='tight')
-        plt.show()
+        self.finish_figure(fig, output_file, show)
         print(f"Статическая карта сохранена: {output_file}")
 
     def calculate_contributions(self):
@@ -584,8 +603,10 @@ class WaterQualityPipelineAnalytics(WaterQualityPipeline):
         print(f"\nКарта вкладов сохранена: {html_path}")
         webbrowser.open('file://' + os.path.realpath(html_path))
 
-    def plot_pollutant_histograms(self, output_file='pollutants_distribution.png'):
-        """Строит гистограммы концентраций загрязняющих веществ, сохраняет их в файл и показывает на экране."""
+    def plot_pollutant_histograms(self, output_file=None, lang='ru', show=True):
+        """Строит гистограммы концентраций загрязняющих веществ на выбранном языке и сохраняет их в файл."""
+        t, _ = self.get_translations(lang)
+        output_file = output_file or self.get_figure_file('pollutants_distribution', lang)
         samples_gdf = self.samples_gdf
 
         # Проверяем, какие параметры есть в данных
@@ -627,22 +648,22 @@ class WaterQualityPipelineAnalytics(WaterQualityPipeline):
                         pdk_value = pdk_value.get('min', 6.0)
                 if isinstance(pdk_value, (int, float)):
                     ax.axvline(x=pdk_value, color='red', linestyle='--',
-                               linewidth=2, label=f'ПДК: {pdk_value}')
+                               linewidth=2, label=t['fig_mpc_label'] % pdk_value)
 
             # Добавляем линию среднего значения
             mean_val = data.mean()
             ax.axvline(x=mean_val, color='orange', linestyle='-',
-                       linewidth=1.5, label=f'Среднее: {mean_val:.3f}')
+                       linewidth=1.5, label=t['fig_mean_label'] % f'{mean_val:.3f}')
 
             # Добавляем линию медианы
             median_val = data.median()
             ax.axvline(x=median_val, color='green', linestyle=':',
-                       linewidth=1.5, label=f'Медиана: {median_val:.3f}')
+                       linewidth=1.5, label=t['fig_median_label'] % f'{median_val:.3f}')
 
             # Настройки графика
-            ax.set_title(self.HISTOGRAM_TITLES[param], fontsize=12, fontweight='bold')
-            ax.set_xlabel('Концентрация (мг/л)', fontsize=10)
-            ax.set_ylabel('Количество проб', fontsize=10)
+            ax.set_title(t[f'fig_hist_{param}'], fontsize=12, fontweight='bold')
+            ax.set_xlabel(t['fig_concentration_mgl'], fontsize=10)
+            ax.set_ylabel(t['sample_count'], fontsize=10)
             ax.legend(loc='upper right', fontsize=8)
             ax.grid(True, alpha=0.3, linestyle='--')
 
@@ -656,11 +677,9 @@ class WaterQualityPipelineAnalytics(WaterQualityPipeline):
         for i in range(len(available_params), len(axes)):
             axes[i].axis('off')
 
-        plt.suptitle('Распределение концентраций загрязняющих веществ',
-                     fontsize=14, fontweight='bold')
+        plt.suptitle(t['fig_hist_title'], fontsize=14, fontweight='bold')
         plt.tight_layout()
-        plt.savefig(self.output_dir + output_file, dpi=150, bbox_inches='tight')
-        plt.show()
+        self.finish_figure(fig, output_file, show)
         print(f"Гистограммы сохранены: {output_file}")
 
     def calculate_chlorophyll(self):
@@ -712,56 +731,57 @@ class WaterQualityPipelineAnalytics(WaterQualityPipeline):
         print(f"  Максимум: {self.ndwi.max():.3f}")
         print(f"  Водная поверхность: {water_mask.sum() / water_mask.size * 100:.1f}%")
 
-    def plot_chlorophyll_analysis(self, output_file='chlorophyll_analysis.png'):
-        """Строит RGB, NDVI, NDWI, карты и гистограмму хлорофилла-а, сохраняет рисунок в файл."""
+    def plot_chlorophyll_analysis(self, output_file=None, lang='ru', show=True):
+        """Строит RGB, NDVI, NDWI, карты и гистограмму хлорофилла-а на выбранном языке, сохраняет рисунок в файл."""
+        t, _ = self.get_translations(lang)
+        output_file = output_file or self.get_figure_file('chlorophyll_analysis', lang)
         fig, axes = plt.subplots(2, 3, figsize=(18, 12))
 
         # 1. RGB снимок
         axes[0, 0].imshow(self.rgb)
-        axes[0, 0].set_title('RGB снимок', fontsize=12)
+        axes[0, 0].set_title(t['fig_rgb'], fontsize=12)
         axes[0, 0].axis('off')
 
         # 2. NDVI (вегетация)
         im1 = axes[0, 1].imshow(self.ndvi, cmap='RdYlGn', vmin=-0.2, vmax=0.8)
-        axes[0, 1].set_title('NDVI (вегетация)', fontsize=12)
+        axes[0, 1].set_title(t['fig_ndvi'], fontsize=12)
         plt.colorbar(im1, ax=axes[0, 1], fraction=0.046)
         axes[0, 1].axis('off')
 
         # 3. NDWI (вода)
         im2 = axes[0, 2].imshow(self.ndwi, cmap='Blues', vmin=-0.5, vmax=0.5)
-        axes[0, 2].set_title('NDWI (водные объекты)', fontsize=12)
+        axes[0, 2].set_title(t['fig_ndwi'], fontsize=12)
         plt.colorbar(im2, ax=axes[0, 2], fraction=0.046)
         axes[0, 2].axis('off')
 
         # 4. Хлорофилл-а (оценка)
         im3 = axes[1, 0].imshow(self.chl_a_estimate, cmap='viridis', vmin=0, vmax=15)
-        axes[1, 0].set_title('Оценка хлорофилла-а (мг/м³)', fontsize=12)
+        axes[1, 0].set_title(t['fig_chl_estimate'], fontsize=12)
         plt.colorbar(im3, ax=axes[1, 0], fraction=0.046)
         axes[1, 0].axis('off')
 
         # 5. Хлорофилл-а только на воде
         im4 = axes[1, 1].imshow(self.chl_a_water, cmap='viridis', vmin=0, vmax=15)
-        axes[1, 1].set_title('Хлорофилл-а (только водные объекты)', fontsize=12)
+        axes[1, 1].set_title(t['fig_chl_water'], fontsize=12)
         plt.colorbar(im4, ax=axes[1, 1], fraction=0.046)
         axes[1, 1].axis('off')
 
         # 6. Гистограмма хлорофилла на воде
         chl_values = self.chl_a_water[~np.isnan(self.chl_a_water)]
         axes[1, 2].hist(chl_values, bins=50, alpha=0.7, color='green', edgecolor='black')
-        axes[1, 2].set_title('Распределение хлорофилла-а (водные объекты)', fontsize=12)
-        axes[1, 2].set_xlabel('Концентрация (мг/м³)')
-        axes[1, 2].set_ylabel('Количество пикселей')
+        axes[1, 2].set_title(t['fig_chl_hist'], fontsize=12)
+        axes[1, 2].set_xlabel(t['fig_concentration_mgm3'])
+        axes[1, 2].set_ylabel(t['fig_pixel_count'])
 
         # Добавляем линии трофических статусов
-        axes[1, 2].axvline(x=1, color='blue', linestyle='--', linewidth=2, label='Олиготрофный')
-        axes[1, 2].axvline(x=3, color='orange', linestyle='--', linewidth=2, label='Мезотрофный')
-        axes[1, 2].axvline(x=10, color='red', linestyle='--', linewidth=2, label='Эвтрофный')
+        axes[1, 2].axvline(x=1, color='blue', linestyle='--', linewidth=2, label=t['fig_oligotrophic'])
+        axes[1, 2].axvline(x=3, color='orange', linestyle='--', linewidth=2, label=t['fig_mesotrophic'])
+        axes[1, 2].axvline(x=10, color='red', linestyle='--', linewidth=2, label=t['fig_eutrophic'])
         axes[1, 2].legend(fontsize=10)
         axes[1, 2].grid(True, alpha=0.3)
 
         plt.tight_layout()
-        plt.savefig(self.output_dir + output_file, dpi=150, bbox_inches='tight')
-        plt.show()
+        self.finish_figure(fig, output_file, show)
         print(f"Анализ хлорофилла сохранен: {output_file}")
 
     def show_chlorophyll_statistics(self):
@@ -833,7 +853,7 @@ class WaterQualityPipelineAnalytics(WaterQualityPipeline):
                 exceeded.append({'name': name, 'ratio': float(row[param] / self.pdk[param])})
         return exceeded
 
-    def collect_attachments(self):
+    def collect_attachments(self, lang='ru'):
         """Возвращает приложения к отчету, для которых есть данные и созданные файлы."""
         attachments = [
             ('attachment_geojson', 'reports/water_quality.geojson'),
@@ -842,7 +862,8 @@ class WaterQualityPipelineAnalytics(WaterQualityPipeline):
             ('attachment_contribution_map', self.output_dir + 'izv_contribution_map.html')
         ]
         if self.report_data['chlorophyll_analysis']:
-            attachments.append(('attachment_chlorophyll', self.output_dir + 'chlorophyll_analysis.png'))
+            attachments.append(('attachment_chlorophyll',
+                                self.output_dir + self.get_figure_file('chlorophyll_analysis', lang)))
 
         return [{'key': key, 'path': path} for key, path in attachments if os.path.exists(path)]
 
@@ -1026,33 +1047,61 @@ class WaterQualityPipelineAnalytics(WaterQualityPipeline):
         print("Все данные собраны в объект 'report_data'.")
 
     def get_report_path(self, extension, lang='ru'):
-        """Возвращает путь к файлу отчета: report.pdf для русского языка, report_en.pdf для английского."""
-        suffix = '' if lang == 'ru' else f'_{lang}'
-        return f'reports/report{suffix}.{extension}'
+        """Возвращает путь к файлу отчета с суффиксом языка: report_ru.pdf, report_en.pdf."""
+        return f'reports/report_{lang}.{extension}'
+
+    def format_report_date(self, value, lang='ru'):
+        """Переводит дату из report_data (ДД.ММ.ГГГГ или ГГГГ-ММ-ДД) в формат выбранного языка."""
+        for source_format in ('%d.%m.%Y', '%Y-%m-%d'):
+            try:
+                date = datetime.strptime(str(value), source_format)
+                break
+            except ValueError:
+                continue
+        else:
+            return value
+
+        date_format = DATE_FORMATS[lang]
+        months = date_format.get('months', [])
+        return date_format['format'].format(
+            day=date.day,
+            month_num=date.month,
+            month=months[date.month - 1] if months else date.month,
+            year=date.year
+        )
+
+    def generate_report_figures(self, lang='ru'):
+        """Строит рисунки отчета на выбранном языке без показа на экране."""
+        if self.samples_gdf_wgs84 is None:
+            self.convert_to_wgs84()
+        self.plot_pollutant_histograms(lang=lang, show=False)
+        self.create_static_izv_map(lang=lang, show=False)
+        # Рисунок хлорофилла строится, только если calculate_chlorophyll() уже выполнен
+        if self.chl_a_water is not None:
+            self.plot_chlorophyll_analysis(lang=lang, show=False)
 
     def generate_html_report(self, template_dir='templates',
                              template_name='report_template.html',
                              output_file=None,
                              lang='ru'):
         """Заполняет HTML-шаблон данными report_data на выбранном языке и сохраняет готовый отчет."""
-        if lang not in TRANSLATIONS:
-            raise ValueError(f"Язык {lang} не поддерживается. Доступные языки: {list(TRANSLATIONS)}")
+        t, value_translations = self.get_translations(lang)
 
         output_file = output_file or self.get_report_path('html', lang)
         print(f"\nГенерация HTML-отчета ({lang})...")
 
         # Загружаем шаблон
         env = Environment(loader=FileSystemLoader(template_dir))
-        value_translations = VALUE_TRANSLATIONS.get(lang, {})
-        env.filters['tv'] = lambda value: value_translations.get(value, value)
+        env.filters['translate'] = lambda value: value_translations.get(value, value)
+        env.filters['format_date'] = lambda value: self.format_report_date(value, lang)
         template = env.get_template(template_name)
 
         # Рендерим HTML
         # Приложения определяются здесь, так как файлы экспорта могут быть созданы после подготовки данных
         self.html_content = template.render(
             **self.report_data,
-            attachments=self.collect_attachments(),
-            t=TRANSLATIONS[lang],
+            attachments=self.collect_attachments(lang),
+            t=t,
             lang=lang
         )
 
@@ -1285,6 +1334,7 @@ class WaterQualityPipelineAnalytics(WaterQualityPipeline):
 
         if 'pdf' in output_formats:
             # PDF создается из HTML-версии отчета
+            self.generate_report_figures(lang)
             self.generate_html_report(lang=lang)
             self.generate_pdf_report(lang=lang)
 

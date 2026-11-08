@@ -55,6 +55,7 @@ def task_5_3(analyzer: WaterQualityPipelineAnalytics):
 def task_4_4(analyzer: WaterQualityPipelineAnalytics):
     # Один и тот же report_data используется для двух разных PDF
     for lang in ['ru', 'en']:
+        analyzer.generate_report_figures(lang=lang)
         analyzer.generate_html_report(lang=lang)
         analyzer.generate_pdf_report(lang=lang)
 
@@ -91,15 +92,15 @@ def main():
     task_2_4(analyzer)
     task_3_1(analyzer)
     task_3_2(analyzer)
-    # task_4_1()
+    task_4_1()
     task_5_1(analyzer)
     task_5_2(analyzer)
     task_5_3(analyzer)
     task_4_4(analyzer)
-    # task_5_4(analyzer)
-    # task_6_1(analyzer)
-    # task_6_2(analyzer)
-    # task_7_1(analyzer)
+    task_5_4(analyzer)
+    task_6_1(analyzer)
+    task_6_2(analyzer)
+    task_7_1(analyzer)
 
 
 if __name__ == '__main__':
