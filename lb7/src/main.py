@@ -440,14 +440,140 @@ def task_4_2(pipeline: VoiceEnhancedPipeline):
               f"{'да' if after['coordinates_correct'] else 'нет':>8}")
 
 
+# Пороги чек-листа качества голосового отчета
+REGION_BOUNDS = {'lat': (45.0, 46.0), 'lon': (47.0, 49.0)}  # Астраханская область
+# Признаки упоминания параметра в тексте (с учетом того, как их пишет Whisper)
+# и допустимые диапазоны значений
+PARAMETERS = {
+    'NH4': {'mention': r'ам+[оу]н|NH4', 'range': (0, 50), 'name': 'аммоний'},
+    'PO4': {'mention': r'ф[ао]сф|PO4', 'range': (0, 20), 'name': 'фосфаты'},
+    'pH': {'mention': r'p\s*h|пе\s*h|пэ|пх', 'range': (4, 10), 'name': 'pH'},
+}
+SPEAKER_THRESHOLD = 0.7   # минимальная уверенность идентификации диктора
+SNR_THRESHOLD = 20        # минимальное оценочное отношение сигнал/шум, дБ
+
+
+def estimate_snr(audio):
+    """
+    Оценка отношения сигнал/шум без эталона: громкость речи (90-й процентиль
+    энергии кадров) относительно фона (10-й процентиль, паузы между словами)
+    """
+    rms = librosa.feature.rms(y=audio, frame_length=1024, hop_length=512)[0]
+    noise = max(np.percentile(rms, 10), 1e-10)
+    return 20 * np.log10(np.percentile(rms, 90) / noise)
+
+
+def check_voice_report(text, audio, speaker_db, encoder):
+    """
+    Чек-лист качества голосового отчета. Возвращает список проверок (название, пройдена, пояснение)
+    """
+    import contextlib
+    import io
+    from resemblyzer import preprocess_wav
+    from voice_enhanced_pipeline import parse_voice_report
+
+    checks = []
+    with contextlib.redirect_stdout(io.StringIO()):
+        data = parse_voice_report(text)
+
+    # 1. Координаты найдены и лежат в районе работ
+    coords = data['coordinates']
+    if coords is None:
+        checks.append(('Координаты', False, 'не найдены'))
+    else:
+        inside = all(lo <= coords[k] <= hi for k, (lo, hi) in REGION_BOUNDS.items())
+        checks.append(('Координаты', inside,
+                       f"{coords['lat']}, {coords['lon']}" + ('' if inside else ' — вне района работ')))
+
+    # 2. Все упомянутые параметры извлечены и лежат в допустимом диапазоне
+    problems, found = [], []
+    for key, p in PARAMETERS.items():
+        if not re.search(p['mention'], text, re.IGNORECASE):
+            continue
+        value = data['measurements'].get(key)
+        lo, hi = p['range']
+        if value is None:
+            problems.append(f"{p['name']} упомянут, но не извлечен")
+        elif not (lo < value <= hi):
+            problems.append(f"{p['name']} = {value} вне диапазона ({lo}; {hi}]")
+        else:
+            found.append(f"{p['name']} = {value}")
+    # Если ни один параметр не упомянут (например, сообщение об аварии) — проверять нечего
+    details = '; '.join(problems or found) or 'в сообщении не упоминаются'
+    checks.append(('Параметры', not problems, details))
+
+    # 3. Диктор идентифицирован с уверенностью выше порога
+    embedding = encoder.embed_utterance(preprocess_wav(audio, source_sr=16000))
+    name, score = max(((n, float(np.dot(embedding, e))) for n, e in speaker_db.items()),
+                      key=lambda x: x[1])
+    checks.append(('Диктор', score > SPEAKER_THRESHOLD, f"{name} ({score:.3f})"))
+
+    # 4. Уровень шума не превышает порогового
+    snr = estimate_snr(audio)
+    checks.append(('Уровень шума', snr >= SNR_THRESHOLD, f"SNR ≈ {snr:.1f} дБ"))
+    return checks
+
+
+def task_6_2(pipeline: VoiceEnhancedPipeline):
+    """
+    Автоматический чек-лист качества голосовых отчетов
+    """
+    from resemblyzer import VoiceEncoder, preprocess_wav
+
+    if pipeline.asr_model is None:
+        pipeline.init_voice_module()
+
+    # База голосов инспекторов: по одной эталонной записи на каждого
+    encoder = VoiceEncoder(verbose=False)
+    speakers = {
+        'Инспектор Иванов': 'audio_samples/test_voice_2.mp3',
+        'Инспектор Петрова': 'audio_samples/otchet_female.mp3',
+    }
+    speaker_db = {name: encoder.embed_utterance(preprocess_wav(path)) for name, path in speakers.items()}
+    print(f"\nБаза голосов: {', '.join(speakers)}")
+    print(f"Пороги: диктор > {SPEAKER_THRESHOLD}, SNR >= {SNR_THRESHOLD} дБ, "
+          f"район {REGION_BOUNDS['lat']} с.ш., {REGION_BOUNDS['lon']} в.д.")
+
+    reports = [
+        'audio_samples/test_voice_1.mp3',
+        'audio_samples/test_voice_3.mp3',
+        'audio_samples/test_voice_1_wind.wav',
+        'audio_samples/test_voice_1_rain.wav',
+        'audio_samples/test_voice_1_machinery.wav',
+        'audio_samples/otchet_male.mp3',
+    ]
+    statuses = {}
+    for path in reports:
+        if not os.path.exists(path):
+            print(f"\nФайл {path} не найден, пропускаем")
+            continue
+        audio, _ = librosa.load(path, sr=16000, mono=True)
+        text = pipeline.asr_model.transcribe(audio, language='ru', temperature=0.0)['text'].strip()
+        checks = check_voice_report(text, audio, speaker_db, encoder)
+        status = 'Готово' if all(ok for _, ok, _ in checks) else 'Требует проверки'
+        statuses[os.path.basename(path)] = status
+
+        print(f"\n{os.path.basename(path)}")
+        print(f"Текст: {text}")
+        for name, ok, info in checks:
+            print(f"[{'+' if ok else '-'}] {name}: {info}")
+        print(f"Статус: {status}")
+
+    print(f"\nИтог")
+    for file, status in statuses.items():
+        print(f"{file:<30}{status}")
+    ready = sum(s == 'Готово' for s in statuses.values())
+    print(f"\nГотово: {ready} из {len(statuses)}, требует проверки экспертом: {len(statuses) - ready}")
+
+
 def main():
     pipeline = VoiceEnhancedPipeline("Экологический мониторинг")
     # task_5_1(pipeline)
     # task_6_1(pipeline)
     # task_1_3(pipeline)
     # task_1_4(pipeline)
-    task_4_2(pipeline)
-    
+    # task_4_2(pipeline)
+    task_6_2(pipeline)
 
 
 if __name__ == '__main__':
