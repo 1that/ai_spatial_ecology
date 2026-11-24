@@ -12,61 +12,42 @@ except ImportError:
     nr = None
     print("Библиотека noisereduce не установлена, метод будет пропущен")
 
-# Фиксируем генератор случайных чисел, чтобы шум (и результаты) повторялись
 np.random.seed(42)
 
 def add_noise_to_audio(audio_path, noise_level=0.3, output_path=None):
-    """
-    Добавление шума к аудиофайлу
-    """
     signal, sr = librosa.load(audio_path, sr=16000)
     noise = np.random.randn(len(signal)) * noise_level
     noisy = signal + noise
-    # Громкость не меняем: иначе SNR сравнивал бы сигналы разного масштаба
     if output_path:
-        # Нормируем только копию для записи в WAV, чтобы не было переполнения int16
         max_val = np.max(np.abs(noisy))
         to_save = noisy / max_val if max_val > 0 else noisy
         wavfile.write(output_path, sr, (to_save * 32767).astype(np.int16))
     return noisy, sr
 
 def align_signals(original, processed):
-    """
-    Выравнивание длины сигналов (обрезаем до меньшей длины)
-    """
     min_len = min(len(original), len(processed))
     return original[:min_len], processed[:min_len]
 
 def calculate_snr(clean, denoised):
-    """
-    Расчет SNR с выравниванием длины
-    """
     clean_trim, denoised_trim = align_signals(clean, denoised)
     noise = clean_trim - denoised_trim
     signal_power = np.sum(clean_trim ** 2)
     noise_power = np.sum(noise ** 2)
     if noise_power == 0:
-        return 100.0  # идеальный случай
+        return 100.0
     snr = 10 * np.log10(signal_power / (noise_power + 1e-10))
     return snr
 
 def spectral_subtraction(y, sr, noise_frames=10, alpha=0.5):
-    """
-    Шумоподавление методом спектрального вычитания
-    """
     D = librosa.stft(y)
     magnitude, phase = np.abs(D), np.angle(D)
     noise_estimate = np.mean(magnitude[:, :noise_frames], axis=1, keepdims=True)
     magnitude_denoised = np.maximum(magnitude - alpha * noise_estimate, 0)
     D_denoised = magnitude_denoised * np.exp(1j * phase)
-    # length=len(y): длина результата совпадает с исходным сигналом
     denoised = librosa.istft(D_denoised, length=len(y))
     return denoised
 
 def wiener_filter(y, sr, noise_frames=10):
-    """
-    Шумоподавление фильтром Винера
-    """
     D = librosa.stft(y)
     magnitude, phase = np.abs(D), np.angle(D)
     noise_power = np.mean(magnitude[:, :noise_frames] ** 2, axis=1, keepdims=True)
@@ -79,31 +60,18 @@ def wiener_filter(y, sr, noise_frames=10):
     return denoised
 
 def nr_denoise(y, sr, stationary=True):
-    """
-    Шумоподавление с помощью библиотеки noisereduce
-    """
     if nr is not None:
         return nr.reduce_noise(y=y, sr=sr, stationary=stationary)
     else:
-        return y  # возвращаем исходный сигнал
+        return y
 
 def compare_denoising_methods(audio_path, noise_level=0.3, save_plots=True):
-    """
-    Сравнение различных методов шумоподавления
-    """
-    # Загружаем оригинал
     original, sr = librosa.load(audio_path, sr=16000)
-    # Добавляем шум
     noisy, _ = add_noise_to_audio(audio_path, noise_level)
-    # Применяем методы
     print("Применение методов шумоподавления...")
-    # Спектральное вычитание
     ss_result = spectral_subtraction(noisy, sr)
-    # Фильтр Винера
     wf_result = wiener_filter(noisy, sr)
-    # noisereduce
     nr_result = nr_denoise(noisy, sr)
-    # Вычисляем SNR
     original_snr = calculate_snr(original, noisy)
     ss_snr = calculate_snr(original, ss_result)
     wf_snr = calculate_snr(original, wf_result)
@@ -113,10 +81,7 @@ def compare_denoising_methods(audio_path, noise_level=0.3, save_plots=True):
     print(f"  Спектральное вычитание: {ss_snr:.2f} дБ (улучшение: {ss_snr - original_snr:.2f})")
     print(f"  Фильтр Винера: {wf_snr:.2f} дБ (улучшение: {wf_snr - original_snr:.2f})")
     print(f"  noisereduce: {nr_snr:.2f} дБ (улучшение: {nr_snr - original_snr:.2f})")
-    # Визуализация
-    # Если длины сигналов совпадают для отображения
     fig, axes = plt.subplots(5, 1, figsize=(14, 12))
-    # Обрезаем все сигналы до одинаковой длины для отображения (первые 10000 отсчетов)
     display_len = min(10000, len(original), len(noisy), len(ss_result), len(wf_result), len(nr_result))
     axes[0].plot(original[:display_len])
     axes[0].set_title('Оригинальный сигнал', fontsize=12)
@@ -147,14 +112,11 @@ def compare_denoising_methods(audio_path, noise_level=0.3, save_plots=True):
         'noisereduce': nr_snr
     }
 
-# Тестирование
-# Список файлов для тестирования
 test_files = [
     'audio_samples/speaker_female.wav',
     'audio_samples/speaker_male.wav',
     'audio_samples/test_short.ogg'
 ]
-# Фильтруем существующие файлы
 existing_files = [f for f in test_files if os.path.exists(f)]
 if not existing_files:
     print("Нет доступных аудиофайлов. Сначала выполните этап 1 и 2.")
@@ -167,7 +129,6 @@ else:
         results = compare_denoising_methods(filepath, noise_level=0.3)
         all_results[os.path.basename(filepath)] = results
 
-    # Эксперимент: влияние уровня шума на качество
     if existing_files:
         test_file = existing_files[0]
         noise_levels = [0.1, 0.2, 0.3, 0.4, 0.5]
@@ -176,7 +137,6 @@ else:
             print(f"\nУровень шума: {noise_lvl}")
             original, sr = librosa.load(test_file, sr=16000)
             noisy, _ = add_noise_to_audio(test_file, noise_lvl)
-            # Применяем лучший метод (noisereduce)
             denoised = nr_denoise(noisy, sr)
             snr_before = calculate_snr(original, noisy)
             snr_after = calculate_snr(original, denoised)
@@ -184,7 +144,6 @@ else:
             print(f"  SNR после: {snr_after:.2f} дБ")
             print(f"  Улучшение: {snr_after - snr_before:.2f} дБ")
 
-    # Сохранение результатов
     os.makedirs('voice_results', exist_ok=True)
     import json
     from datetime import datetime

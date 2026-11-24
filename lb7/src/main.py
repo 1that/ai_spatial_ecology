@@ -5,8 +5,6 @@ from difflib import SequenceMatcher
 import librosa
 from voice_enhanced_pipeline import VoiceEnhancedPipeline, parse_coordinates
 
-# Тестовые голосовые сообщения: (текст для озвучивания, имя файла).
-# Общий список для задач 5.1 и 6.1, чтобы эталонные тексты совпадали с аудио
 TEST_AUDIOS = [
     ("Проба воды. Координаты 45.35, 47.85. Аммоний 0.5, фосфаты 0.3, pH 7.2", "test_voice_1.mp3"),
     ("Обнаружена асбестовая труба. Координаты 45.62, 48.14. Повреждение 30 процентов", "test_voice_2.mp3"),
@@ -15,16 +13,13 @@ TEST_AUDIOS = [
 
 
 def task_5_1(pipeline: VoiceEnhancedPipeline):
-    # Пересоздание аудиофайлов
     os.makedirs('audio_samples', exist_ok=True)
-    # Удаляем старые файлы
     for f in ['test_voice_1.mp3', 'test_voice_2.mp3', 'test_voice_3.mp3']:
         filepath = f'audio_samples/{f}'
         if os.path.exists(filepath):
             os.remove(filepath)
             print(f"Удален: {f}")
 
-    # Создаем новые файлы
     from gtts import gTTS
 
     test_audios = TEST_AUDIOS
@@ -37,7 +32,6 @@ def task_5_1(pipeline: VoiceEnhancedPipeline):
         time.sleep(1)
         print(f"  Создан ({os.path.getsize(filepath)} байт)")
 
-    # Тестирование
     pipeline.init_voice_module()
     pipeline.create_sample_points(10, 'astrahan')
 
@@ -65,9 +59,6 @@ from datetime import datetime
 import json
 
 def evaluate_asr_quality(pipeline, test_phrases):
-    """
-    Оценка качества распознавания речи
-    """
     if pipeline.asr_model is None:
         print("Речевой модуль не инициализирован")
         return []
@@ -78,15 +69,11 @@ def evaluate_asr_quality(pipeline, test_phrases):
         if not os.path.exists(audio_path):
             print(f"Файл {audio_path} не найден, пропускаем")
             continue
-        # Распознаем
-        # Загружаем звук заранее (моно, 16 кГц): Whisper без ffmpeg не читает файлы сам
         audio, _ = librosa.load(audio_path, sr=16000, mono=True)
         result = pipeline.asr_model.transcribe(audio, language='ru')
         recognized = result['text']
-        # Оценка сходства
         from difflib import SequenceMatcher
         similarity = SequenceMatcher(None, expected_text.lower(), recognized.lower()).ratio()
-        # Проверка наличия координат
         coords = parse_coordinates(recognized)
         results.append({
             'id': i + 1,
@@ -106,19 +93,14 @@ def evaluate_asr_quality(pipeline, test_phrases):
 
 
 def task_6_1(pipeline: VoiceEnhancedPipeline):
-    # Модель загружается в task_5_1; если она не вызывалась — загружаем здесь
     if pipeline.asr_model is None:
         pipeline.init_voice_module()
 
-    # Создание тестовых пар: эталонный текст — тот же, что озвучен в task_5_1
     test_pairs = [(text, f'audio_samples/{filename}') for text, filename in TEST_AUDIOS]
 
-    # Оценка качества
     evaluation_results = evaluate_asr_quality(pipeline, test_pairs)
 
-    # Сохранение результатов
     os.makedirs('voice_results', exist_ok=True)
-    # Сохраняем результаты
     evaluation_summary = {
         'timestamp': datetime.now().isoformat(),
         'total_tests': len(evaluation_results),
@@ -130,7 +112,6 @@ def task_6_1(pipeline: VoiceEnhancedPipeline):
         json.dump(evaluation_summary, f, ensure_ascii=False, indent=2)
     print("Результаты сохранены в voice_results/asr_quality_evaluation.json")
 
-    # Выводы
     if evaluation_results:
         avg = evaluation_summary['average_similarity']
         coords_success = evaluation_summary['successful_coords']
@@ -155,17 +136,12 @@ def task_6_1(pipeline: VoiceEnhancedPipeline):
 
 
 def task_1_3(pipeline: VoiceEnhancedPipeline, runs=3):
-    """
-    Влияние температуры на «креативность» Whisper:
-    один и тот же файл распознается несколько раз при temperature = 0.0, 0.5, 1.0
-    """
     import re
     from difflib import SequenceMatcher
 
     if pipeline.asr_model is None:
         pipeline.init_voice_module()
 
-    # Файл с наибольшим количеством чисел и его эталонный текст
     reference, filename = TEST_AUDIOS[0]
     audio_path = f'audio_samples/{filename}'
     if not os.path.exists(audio_path):
@@ -173,8 +149,6 @@ def task_1_3(pipeline: VoiceEnhancedPipeline, runs=3):
         return
     audio, _ = librosa.load(audio_path, sr=16000, mono=True)
 
-    # Эталонные значения: все группы цифр и координаты
-    # (Whisper пишет "45.35" как "45, 35", поэтому сравниваем группы цифр, а не числа)
     ref_digits = re.findall(r'\d+', reference)
     ref_words = set(re.findall(r'[а-яёa-z]+', reference.lower()))
     expected_coords = parse_coordinates(reference)
@@ -190,16 +164,12 @@ def task_1_3(pipeline: VoiceEnhancedPipeline, runs=3):
         for run in range(1, runs + 1):
             text = pipeline.asr_model.transcribe(audio, language='ru', temperature=temp)['text'].strip()
             texts.append(text)
-            # Сходство с эталоном
             similarity = SequenceMatcher(None, reference.lower(), text.lower()).ratio()
-            # Точность чисел: доля эталонных групп цифр, найденных в том же порядке
             digits = re.findall(r'\d+', text)
             matcher = SequenceMatcher(None, ref_digits, digits)
             matched = sum(block.size for block in matcher.get_matching_blocks())
             digits_acc = matched / len(ref_digits)
-            # «Галлюцинации»: слова, которых нет в эталоне
             extra_words = [w for w in re.findall(r'[а-яёa-z]+', text.lower()) if w not in ref_words]
-            # Правильно ли извлечены координаты
             coords = parse_coordinates(text)
             coords_ok = coords == expected_coords
             runs_info.append({
@@ -233,8 +203,6 @@ def task_1_3(pipeline: VoiceEnhancedPipeline, runs=3):
               f"{r['coordinates_correct']:>12}/{runs}")
 
 
-# Фразы с профессиональной терминологией и ключевые термины в каждой из них.
-# Термины записаны в той же форме, в какой они стоят во фразе
 ECO_TERM_PHRASES = [
     ("Индекс загрязнения воды ИЗВ составил 2.3, вода умеренно загрязненная.",
      ["индекс загрязнения воды", "ИЗВ"]),
@@ -258,38 +226,25 @@ ECO_TERM_PHRASES = [
 
 
 def normalize_text(text):
-    """
-    Нормализация для сравнения: нижний регистр, ё -> е, без знаков препинания
-    """
     text = text.lower().replace('ё', 'е').replace('-', ' ')
     text = re.sub(r'[^\w\s]', ' ', text)
     return ' '.join(text.split())
 
 
 def term_found(term, text):
-    """
-    Есть ли термин в тексте. Пробелы не учитываются, чтобы "БПК 5" совпадало с "БПК5"
-    """
     return normalize_text(term).replace(' ', '') in normalize_text(text).replace(' ', '')
 
 
 def fix_terms(text, glossary, threshold=0.8):
-    """
-    Пост-обработка: слова текста, похожие на термин из словаря, заменяются на этот термин.
-    Похожесть считается по SequenceMatcher для окон из 1..(n+1) слов, где n - число слов в термине
-    """
     words = text.split()
-    # Сначала длинные термины, чтобы "индекс загрязнения воды" не разбивался на части
     for term in sorted(glossary, key=len, reverse=True):
         if term_found(term, ' '.join(words)):
             continue
-        # Короткие термины (аббревиатуры ИЗВ, ПДК) пропускаем: нечеткое сравнение
-        # коротких строк ненадежно, например "и в" оказывается похоже на "ИЗВ"
         if len(term) < 5:
             continue
         term_norm = normalize_text(term).replace(' ', '')
         n = len(term.split())
-        best = None  # (похожесть, начало окна, длина окна)
+        best = None
         for size in range(1, n + 2):
             for start in range(len(words) - size + 1):
                 window = normalize_text(' '.join(words[start:start + size])).replace(' ', '')
@@ -305,17 +260,12 @@ def fix_terms(text, glossary, threshold=0.8):
 
 
 def task_1_4(pipeline: VoiceEnhancedPipeline):
-    """
-    Тестирование Whisper на «экологическом сленге»
-    """
     from gtts import gTTS
 
     if pipeline.asr_model is None:
         pipeline.init_voice_module()
 
-    # Словарь терминов предметной области
     glossary = sorted({term for _, terms in ECO_TERM_PHRASES for term in terms})
-    # Подсказка для Whisper: модель учитывает её при распознавании
     prompt = "Экологический мониторинг водных объектов. Термины: " + ", ".join(glossary) + "."
 
     os.makedirs('audio_samples', exist_ok=True)
@@ -326,17 +276,13 @@ def task_1_4(pipeline: VoiceEnhancedPipeline):
 
     for i, (phrase, terms) in enumerate(ECO_TERM_PHRASES, 1):
         audio_path = f'audio_samples/eco_terms_{i:02d}.mp3'
-        # Озвучиваем фразу (только если файла еще нет)
         if not os.path.exists(audio_path):
             gTTS(text=phrase, lang='ru', slow=False).save(audio_path)
             time.sleep(1)
         audio, _ = librosa.load(audio_path, sr=16000, mono=True)
 
-        # 1. Обычное распознавание
         base = pipeline.asr_model.transcribe(audio, language='ru', temperature=0.0)['text'].strip()
-        # 2. Пост-обработка словарем замен
         fixed = fix_terms(base, glossary)
-        # 3. Распознавание с подсказкой из терминов
         prompted = pipeline.asr_model.transcribe(audio, language='ru', temperature=0.0,
                                                  initial_prompt=prompt)['text'].strip()
         texts = dict(zip(variants, [base, fixed, prompted]))
@@ -362,17 +308,12 @@ def task_1_4(pipeline: VoiceEnhancedPipeline):
 
 
 def evaluate_recognition(reference, text):
-    """
-    Сравнение распознанного текста с эталоном: сходство, точность чисел, координаты
-    """
     import contextlib
     import io
     similarity = SequenceMatcher(None, reference.lower(), text.lower()).ratio()
-    # Точность чисел: доля эталонных групп цифр, найденных в том же порядке
     ref_digits = re.findall(r'\d+', reference)
     matcher = SequenceMatcher(None, ref_digits, re.findall(r'\d+', text))
     matched = sum(block.size for block in matcher.get_matching_blocks())
-    # parse_coordinates печатает промежуточные сообщения — скрываем их
     with contextlib.redirect_stdout(io.StringIO()):
         coords_ok = parse_coordinates(text) == parse_coordinates(reference)
     return {
@@ -384,10 +325,6 @@ def evaluate_recognition(reference, text):
 
 
 def task_4_2(pipeline: VoiceEnhancedPipeline):
-    """
-    Качество распознавания «до» и «после» шумоподавления (noisereduce)
-    для записей с шумом ветра, дождя и техники
-    """
     import noisereduce as nr
     import soundfile as sf
 
@@ -409,9 +346,7 @@ def task_4_2(pipeline: VoiceEnhancedPipeline):
             print(f"\nФайл {path} не найден, пропускаем")
             continue
         noisy, sr = librosa.load(path, sr=16000, mono=True)
-        # Лучший метод из задачи 4.1 с теми же параметрами
         denoised = nr.reduce_noise(y=noisy, sr=sr, stationary=True)
-        # Сохраняем очищенную запись, чтобы ее можно было прослушать
         denoised_path = os.path.splitext(path)[0] + '_denoised.wav'
         sf.write(denoised_path, denoised, sr)
 
@@ -427,7 +362,6 @@ def task_4_2(pipeline: VoiceEnhancedPipeline):
                   f"координаты: {'верно' if metrics['coordinates_correct'] else 'неверно'}")
         rows.append(row)
 
-    # Сводная таблица
     print(f"\n{'=' * 60}\nСводная таблица\n{'=' * 60}")
     print(f"{'Шум':<10}{'Сходство до':>13}{'после':>8}{'Числа до':>10}{'после':>8}"
           f"{'Коорд. до':>11}{'после':>8}")
@@ -440,33 +374,23 @@ def task_4_2(pipeline: VoiceEnhancedPipeline):
               f"{'да' if after['coordinates_correct'] else 'нет':>8}")
 
 
-# Пороги чек-листа качества голосового отчета
-REGION_BOUNDS = {'lat': (45.0, 46.0), 'lon': (47.0, 49.0)}  # Астраханская область
-# Признаки упоминания параметра в тексте (с учетом того, как их пишет Whisper)
-# и допустимые диапазоны значений
+REGION_BOUNDS = {'lat': (45.0, 46.0), 'lon': (47.0, 49.0)}
 PARAMETERS = {
     'NH4': {'mention': r'ам+[оу]н|NH4', 'range': (0, 50), 'name': 'аммоний'},
     'PO4': {'mention': r'ф[ао]сф|PO4', 'range': (0, 20), 'name': 'фосфаты'},
     'pH': {'mention': r'p\s*h|пе\s*h|пэ|пх', 'range': (4, 10), 'name': 'pH'},
 }
-SPEAKER_THRESHOLD = 0.7   # минимальная уверенность идентификации диктора
-SNR_THRESHOLD = 20        # минимальное оценочное отношение сигнал/шум, дБ
+SPEAKER_THRESHOLD = 0.7
+SNR_THRESHOLD = 20
 
 
 def estimate_snr(audio):
-    """
-    Оценка отношения сигнал/шум без эталона: громкость речи (90-й процентиль
-    энергии кадров) относительно фона (10-й процентиль, паузы между словами)
-    """
     rms = librosa.feature.rms(y=audio, frame_length=1024, hop_length=512)[0]
     noise = max(np.percentile(rms, 10), 1e-10)
     return 20 * np.log10(np.percentile(rms, 90) / noise)
 
 
 def check_voice_report(text, audio, speaker_db, encoder):
-    """
-    Чек-лист качества голосового отчета. Возвращает список проверок (название, пройдена, пояснение)
-    """
     import contextlib
     import io
     from resemblyzer import preprocess_wav
@@ -476,7 +400,6 @@ def check_voice_report(text, audio, speaker_db, encoder):
     with contextlib.redirect_stdout(io.StringIO()):
         data = parse_voice_report(text)
 
-    # 1. Координаты найдены и лежат в районе работ
     coords = data['coordinates']
     if coords is None:
         checks.append(('Координаты', False, 'не найдены'))
@@ -485,7 +408,6 @@ def check_voice_report(text, audio, speaker_db, encoder):
         checks.append(('Координаты', inside,
                        f"{coords['lat']}, {coords['lon']}" + ('' if inside else ' — вне района работ')))
 
-    # 2. Все упомянутые параметры извлечены и лежат в допустимом диапазоне
     problems, found = [], []
     for key, p in PARAMETERS.items():
         if not re.search(p['mention'], text, re.IGNORECASE):
@@ -498,32 +420,25 @@ def check_voice_report(text, audio, speaker_db, encoder):
             problems.append(f"{p['name']} = {value} вне диапазона ({lo}; {hi}]")
         else:
             found.append(f"{p['name']} = {value}")
-    # Если ни один параметр не упомянут (например, сообщение об аварии) — проверять нечего
     details = '; '.join(problems or found) or 'в сообщении не упоминаются'
     checks.append(('Параметры', not problems, details))
 
-    # 3. Диктор идентифицирован с уверенностью выше порога
     embedding = encoder.embed_utterance(preprocess_wav(audio, source_sr=16000))
     name, score = max(((n, float(np.dot(embedding, e))) for n, e in speaker_db.items()),
                       key=lambda x: x[1])
     checks.append(('Диктор', score > SPEAKER_THRESHOLD, f"{name} ({score:.3f})"))
 
-    # 4. Уровень шума не превышает порогового
     snr = estimate_snr(audio)
     checks.append(('Уровень шума', snr >= SNR_THRESHOLD, f"SNR ≈ {snr:.1f} дБ"))
     return checks
 
 
 def task_6_2(pipeline: VoiceEnhancedPipeline):
-    """
-    Автоматический чек-лист качества голосовых отчетов
-    """
     from resemblyzer import VoiceEncoder, preprocess_wav
 
     if pipeline.asr_model is None:
         pipeline.init_voice_module()
 
-    # База голосов инспекторов: по одной эталонной записи на каждого
     encoder = VoiceEncoder(verbose=False)
     speakers = {
         'Инспектор Иванов': 'audio_samples/test_voice_2.mp3',
@@ -568,11 +483,6 @@ def task_6_2(pipeline: VoiceEnhancedPipeline):
 
 def main():
     pipeline = VoiceEnhancedPipeline("Экологический мониторинг")
-    # task_5_1(pipeline)
-    # task_6_1(pipeline)
-    # task_1_3(pipeline)
-    # task_1_4(pipeline)
-    # task_4_2(pipeline)
     task_6_2(pipeline)
 
 

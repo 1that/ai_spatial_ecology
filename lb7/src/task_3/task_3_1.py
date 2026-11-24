@@ -1,29 +1,21 @@
-# Идентификация дикторов (resemblyzer)
 import os
 import numpy as np
 import json
 from datetime import datetime
 from gtts import gTTS
 
-# Импорт Resemblyzer
 from resemblyzer import VoiceEncoder, preprocess_wav
 
 class SpeakerDatabase:
-    """
-    База данных голосов для идентификации дикторов
-    """
     def __init__(self):
         print("Загрузка модели VoiceEncoder...")
         self.encoder = VoiceEncoder()
-        self.embeddings = {}  # имя - эмбеддинг
-        self.names = []  # список имен
-        self.audio_paths = {}  # имя - путь к аудио
+        self.embeddings = {}
+        self.names = []
+        self.audio_paths = {}
         print("Модель загружена")
 
     def extract_embedding(self, audio_path):
-        """
-        Извлечение голосового эмбеддинга из аудио
-        """
         try:
             wav = preprocess_wav(audio_path)
             embedding = self.encoder.embed_utterance(wav)
@@ -33,9 +25,6 @@ class SpeakerDatabase:
             return None
 
     def add_speaker(self, name, audio_path):
-        """
-        Добавление голоса в базу
-        """
         if not os.path.exists(audio_path):
             print(f"Файл {audio_path} не найден")
             return False
@@ -49,9 +38,6 @@ class SpeakerDatabase:
         return True
 
     def identify(self, audio_path, threshold=0.7):
-        """
-        Идентификация диктора по аудио
-        """
         if not self.embeddings:
             print("База пуста. Сначала добавьте дикторов.")
             return None, 0
@@ -61,7 +47,6 @@ class SpeakerDatabase:
         best_match = None
         best_score = -1
         for name, db_embedding in self.embeddings.items():
-            # Косинусное сходство (Resemblyzer уже дает нормализованные векторы)
             similarity = np.dot(test_embedding, db_embedding)
             if similarity > best_score:
                 best_score = similarity
@@ -72,9 +57,6 @@ class SpeakerDatabase:
             return None, best_score
 
     def verify(self, audio_path, claimed_name, threshold=0.7):
-        """
-        Верификация диктора
-        """
         if claimed_name not in self.embeddings:
             print(f"Диктор {claimed_name} не найден в базе")
             return False, 0
@@ -104,11 +86,9 @@ class SpeakerDatabase:
             json.dump(data, f, ensure_ascii=False, indent=2)
         print(f"База сохранена: {filepath}")
 
-# Создание базы голосов
 os.makedirs('audio_samples', exist_ok=True)
 db = SpeakerDatabase()
 
-# Используем существующие файлы
 existing_speakers = [
     ('speaker_female', 'audio_samples/speaker_female.wav'),
     ('speaker_male', 'audio_samples/speaker_male.wav')
@@ -120,7 +100,6 @@ for name, path in existing_speakers:
     else:
         print(f"Файл {path} не найден")
 
-# Создаем синтетические голоса для расширения
 synthetic_speakers = [
     ('inspector_ivanov', 'audio_samples/speaker_ivanov.mp3'),
     ('inspector_petrov', 'audio_samples/speaker_petrov.mp3'),
@@ -142,7 +121,6 @@ for name, path in synthetic_speakers:
 print(f"\nБаза голосов создана. Всего дикторов: {len(db.names)}")
 print(f"  Дикторы: {', '.join(db.names)}")
 
-# Тестирование идентификации
 test_files = [
     ('speaker_female.wav', 'speaker_female'),
     ('speaker_male.wav', 'speaker_male'),
@@ -159,5 +137,4 @@ for filename, expected in test_files:
         print(f"  Результат: {name if name else 'НЕ ИЗВЕСТЕН'}")
         print(f"  Уверенность: {score:.4f}")
 
-# Сохранение
 db.save('voice_results/speaker_database.json')
