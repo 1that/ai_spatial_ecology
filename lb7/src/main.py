@@ -361,12 +361,92 @@ def task_1_4(pipeline: VoiceEnhancedPipeline):
         print(f"{v:<19}{errors[v]:>3} ошибок  ({percent:.1f}%)")
 
 
+def evaluate_recognition(reference, text):
+    """
+    Сравнение распознанного текста с эталоном: сходство, точность чисел, координаты
+    """
+    import contextlib
+    import io
+    similarity = SequenceMatcher(None, reference.lower(), text.lower()).ratio()
+    # Точность чисел: доля эталонных групп цифр, найденных в том же порядке
+    ref_digits = re.findall(r'\d+', reference)
+    matcher = SequenceMatcher(None, ref_digits, re.findall(r'\d+', text))
+    matched = sum(block.size for block in matcher.get_matching_blocks())
+    # parse_coordinates печатает промежуточные сообщения — скрываем их
+    with contextlib.redirect_stdout(io.StringIO()):
+        coords_ok = parse_coordinates(text) == parse_coordinates(reference)
+    return {
+        'similarity': similarity,
+        'digits_matched': matched,
+        'digits_total': len(ref_digits),
+        'coordinates_correct': coords_ok
+    }
+
+
+def task_4_2(pipeline: VoiceEnhancedPipeline):
+    """
+    Качество распознавания «до» и «после» шумоподавления (noisereduce)
+    для записей с шумом ветра, дождя и техники
+    """
+    import noisereduce as nr
+    import soundfile as sf
+
+    if pipeline.asr_model is None:
+        pipeline.init_voice_module()
+
+    reference = TEST_AUDIOS[0][0]
+    test_files = [
+        ('Без шума', 'audio_samples/test_voice_1.mp3'),
+        ('Ветер', 'audio_samples/test_voice_1_wind.wav'),
+        ('Дождь', 'audio_samples/test_voice_1_rain.wav'),
+        ('Техника', 'audio_samples/test_voice_1_machinery.wav'),
+    ]
+    print(f"\nЭталон: {reference}")
+
+    rows = []
+    for noise_type, path in test_files:
+        if not os.path.exists(path):
+            print(f"\nФайл {path} не найден, пропускаем")
+            continue
+        noisy, sr = librosa.load(path, sr=16000, mono=True)
+        # Лучший метод из задачи 4.1 с теми же параметрами
+        denoised = nr.reduce_noise(y=noisy, sr=sr, stationary=True)
+        # Сохраняем очищенную запись, чтобы ее можно было прослушать
+        denoised_path = os.path.splitext(path)[0] + '_denoised.wav'
+        sf.write(denoised_path, denoised, sr)
+
+        print(f"\n{'=' * 60}\n{noise_type}: {os.path.basename(path)}\n{'=' * 60}")
+        row = {'noise': noise_type}
+        for stage, audio in [('До', noisy), ('После', denoised)]:
+            text = pipeline.asr_model.transcribe(audio, language='ru', temperature=0.0)['text'].strip()
+            metrics = evaluate_recognition(reference, text)
+            row[stage] = metrics
+            print(f"  {stage} шумоподавления: {text}")
+            print(f"    Сходство: {metrics['similarity']:.3f}, "
+                  f"числа: {metrics['digits_matched']}/{metrics['digits_total']}, "
+                  f"координаты: {'верно' if metrics['coordinates_correct'] else 'неверно'}")
+        rows.append(row)
+
+    # Сводная таблица
+    print(f"\n{'=' * 60}\nСводная таблица\n{'=' * 60}")
+    print(f"{'Шум':<10}{'Сходство до':>13}{'после':>8}{'Числа до':>10}{'после':>8}"
+          f"{'Коорд. до':>11}{'после':>8}")
+    for r in rows:
+        before, after = r['До'], r['После']
+        print(f"{r['noise']:<10}{before['similarity']:>13.3f}{after['similarity']:>8.3f}"
+              f"{before['digits_matched']:>7}/{before['digits_total']}"
+              f"{after['digits_matched']:>5}/{after['digits_total']}"
+              f"{'да' if before['coordinates_correct'] else 'нет':>11}"
+              f"{'да' if after['coordinates_correct'] else 'нет':>8}")
+
+
 def main():
     pipeline = VoiceEnhancedPipeline("Экологический мониторинг")
     # task_5_1(pipeline)
     # task_6_1(pipeline)
     # task_1_3(pipeline)
-    task_1_4(pipeline)
+    # task_1_4(pipeline)
+    task_4_2(pipeline)
     
 
 
