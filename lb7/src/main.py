@@ -483,6 +483,11 @@ def task_6_2(pipeline: VoiceEnhancedPipeline):
 
 def main():
     pipeline = VoiceEnhancedPipeline("Экологический мониторинг")
+    # task_5_1(pipeline)
+    # task_6_1(pipeline)
+    # task_1_3(pipeline)
+    # task_1_4(pipeline)
+    # task_4_2(pipeline)
     task_6_2(pipeline)
 
 
